@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
+     crossorigin="anonymous"></script>
+    </head>
+<title>Rust 的 Unit 类型 | Dilfish&#39;s Blog</title>
+<meta charset="utf-8">
+<meta name="generator" content="Hugo 0.147.8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://blog.871116.xyz/css/index.css">
+<link rel="stylesheet" href="https://blog.871116.xyz/css/classes.css">
+<link rel="canonical" href="https://blog.871116.xyz/posts/rust-unit/">
+<link rel="alternate" type="application/rss+xml" href="" title="Dilfish&#39;s Blog">
+
+<body>
+
+<header class="icons">
+  
+    <a href="https://blog.871116.xyz/">Dilfish&#39;s Blog</a>
+  
+    <a href="https://871116.xyz">Homepage</a>
+  
+  
+</header>
+
+<article>
+  <header>
+    <h1>Rust 的 Unit 类型</h1>
+    <time datetime="2022-08-10T15:42:36&#43;08:00">August 10, 2022</time>
+  </header>
+  <h3 id="起因">起因</h3>
+<p>我在看 rust 的 <a href="https://docs.rs/http/latest/http/">http</a> 库时，发现了这样的一个例子：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">use</span> http::{Request, Response};
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">response</span>(req: <span style="color:#a6e22e">Request</span><span style="color:#f92672">&lt;</span>()<span style="color:#f92672">&gt;</span>) -&gt; <span style="color:#a6e22e">http</span>::Result<span style="color:#f92672">&lt;</span>Response<span style="color:#f92672">&lt;</span>()<span style="color:#f92672">&gt;&gt;</span> {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">match</span> req.uri().path() {
+</span></span><span style="display:flex;"><span>        <span style="color:#e6db74">&#34;/&#34;</span> <span style="color:#f92672">=&gt;</span> index(req),
+</span></span><span style="display:flex;"><span>        <span style="color:#e6db74">&#34;/foo&#34;</span> <span style="color:#f92672">=&gt;</span> foo(req),
+</span></span><span style="display:flex;"><span>        <span style="color:#e6db74">&#34;/bar&#34;</span> <span style="color:#f92672">=&gt;</span> bar(req),
+</span></span><span style="display:flex;"><span>        _ <span style="color:#f92672">=&gt;</span> not_found(req),
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>其中比较引人注目的是 Request&lt;()&gt; 这个表达式。</p>
+<h3 id="文档">文档</h3>
+<ul>
+<li><a href="https://www.justanotherdot.com/posts/the-many-uses-of-the-empty-tuple.html">https://www.justanotherdot.com/posts/the-many-uses-of-the-empty-tuple.html</a></li>
+<li><a href="https://stackoverflow.com/questions/24842271/what-is-the-purpose-of-the-unit-type-in-rust">https://stackoverflow.com/questions/24842271/what-is-the-purpose-of-the-unit-type-in-rust</a></li>
+<li><a href="https://doc.rust-lang.org/std/iter/trait.Iterator.html">https://doc.rust-lang.org/std/iter/trait.Iterator.html</a></li>
+</ul>
+<h3 id="含义">含义</h3>
+<p>可以看到 () 名字叫做 unit type，而 () 既是他的类型，也是他的唯一值。用来表示没有值的意思。和 C 系的 void 或者 NULL 类似，但又不完全相同。</p>
+<p>实例中的那个 Request 的泛型类型写 ()，则表示没有泛型类型，也就是最基础的 Request 实例，如果需要特别的定义，则需要写另外的类型。例如 body 里面写值，则需要将 Request 写为 Request&lt;&amp;str&gt;。</p>
+<h3 id="其他">其他</h3>
+<p>而 collect 的文档是：
+collect() can also create instances of types that are not typical collections. For example, a String can be built from chars, and an iterator of Result&lt;T, E&gt; items can be collected into Result&lt;Collection<!-- raw HTML omitted -->, E&gt;. See the examples below for more.</p>
+<p>Because collect() is so general, it can cause problems with type inference. As such, collect() is one of the few times you’ll see the syntax affectionately known as the ‘turbofish’: ::&lt;&gt;. This helps the inference algorithm understand specifically which collection you’re trying to collect into.</p>
+
+</article>
+
+
+
+<div align="center">Copy right of dilfish, and all rights reserved!</div>
+</body>
+
+</html>

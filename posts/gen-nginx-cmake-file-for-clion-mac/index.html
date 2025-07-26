@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
+     crossorigin="anonymous"></script>
+    </head>
+<title>Mac 下为 Clion 生成 nginx 的 CMakeLists.txt 文件 | Dilfish&#39;s Blog</title>
+<meta charset="utf-8">
+<meta name="generator" content="Hugo 0.147.8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://blog.871116.xyz/css/index.css">
+<link rel="stylesheet" href="https://blog.871116.xyz/css/classes.css">
+<link rel="canonical" href="https://blog.871116.xyz/posts/gen-nginx-cmake-file-for-clion-mac/">
+<link rel="alternate" type="application/rss+xml" href="" title="Dilfish&#39;s Blog">
+
+<body>
+
+<header class="icons">
+  
+    <a href="https://blog.871116.xyz/">Dilfish&#39;s Blog</a>
+  
+    <a href="https://871116.xyz">Homepage</a>
+  
+  
+</header>
+
+<article>
+  <header>
+    <h1>Mac 下为 Clion 生成 nginx 的 CMakeLists.txt 文件</h1>
+    <time datetime="2020-03-26T10:53:25&#43;08:00">March 26, 2020</time>
+  </header>
+  <h2 id="clion--nginx--mac">CLion + nginx + Mac</h2>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-cmake" data-lang="cmake"><span style="display:flex;"><span>project(<span style="color:#e6db74">nginx</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>cmake_minimum_required(<span style="color:#e6db74">VERSION</span> <span style="color:#e6db74">3.1</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>INCLUDE_DIRECTORIES(<span style="color:#e6db74">./</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>INCLUDE_DIRECTORIES(<span style="color:#e6db74">/usr/include/libxml2</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>INCLUDE_DIRECTORIES(<span style="color:#e6db74">/usr/local/Cellar/pcre/8.44/include</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>INCLUDE_DIRECTORIES(<span style="color:#e6db74">/Users/seanzhang/Downloads/nginx-1.17.9/deps/openssl-1.1.1e/include</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>INCLUDE_DIRECTORIES(<span style="color:#e6db74">./objs</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>INCLUDE_DIRECTORIES(<span style="color:#e6db74">./src/core</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>INCLUDE_DIRECTORIES(<span style="color:#e6db74">./src/event</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>INCLUDE_DIRECTORIES(<span style="color:#e6db74">./src/os/unix</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>INCLUDE_DIRECTORIES(<span style="color:#e6db74">./src/http</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>INCLUDE_DIRECTORIES(<span style="color:#e6db74">./src/http/modules</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>INCLUDE_DIRECTORIES(<span style="color:#e6db74">./src/mail</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>LINK_DIRECTORIES(<span style="color:#e6db74">/Users/seanzhang/Downloads/nginx-1.17.9/deps/openssl-1.1.1e</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>aux_source_directory(<span style="color:#e6db74">.</span> <span style="color:#e6db74">SRC_LIST</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>aux_source_directory(<span style="color:#e6db74">./src/core</span> <span style="color:#e6db74">SRC_LIST</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>aux_source_directory(<span style="color:#e6db74">./src/event</span> <span style="color:#e6db74">SRC_LIST</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>aux_source_directory(<span style="color:#e6db74">./src/os/unix</span> <span style="color:#e6db74">SRC_LIST</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>aux_source_directory(<span style="color:#e6db74">./src/http</span> <span style="color:#e6db74">SRC_LIST</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>aux_source_directory(<span style="color:#e6db74">./src/http/modules</span> <span style="color:#e6db74">SRC_LIST</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>set(<span style="color:#e6db74">SRC_LIST</span> <span style="color:#f92672">${</span>SRC_LIST<span style="color:#f92672">}</span> <span style="color:#e6db74">./src/event/modules/ngx_kqueue_module.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>set(<span style="color:#e6db74">SRC_LIST</span> <span style="color:#f92672">${</span>SRC_LIST<span style="color:#f92672">}</span> <span style="color:#e6db74">./objs/ngx_modules.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/os/unix/ngx_linux_init.c</span> <span style="color:#e6db74">./src/os/unix/ngx_linux_sendfile_chain.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/os/unix/ngx_freebsd_init.c</span> <span style="color:#e6db74">./src/os/unix/ngx_freebsd_sendfile_chain.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/os/unix/ngx_solaris_init.c</span> <span style="color:#e6db74">./src/os/unix/ngx_solaris_sendfilev_chain.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/core/ngx_thread_pool.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/os/unix/ngx_file_aio_read.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/os/unix/ngx_linux_aio_read.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/os/unix/ngx_thread_cond.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/os/unix/ngx_thread_mutex.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/os/unix/ngx_thread_id.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/http/modules/ngx_http_dav_module.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/http/modules/ngx_http_geoip_module.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/http/modules/ngx_http_degradation_module.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/http/modules/ngx_http_grpc_module.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/http/modules/ngx_http_image_filter_module.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>list(<span style="color:#e6db74">REMOVE_ITEM</span> <span style="color:#e6db74">SRC_LIST</span> <span style="color:#e6db74">./src/http/modules/ngx_http_stub_status_module.c</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>add_executable(<span style="color:#f92672">${</span>PROJECT_NAME<span style="color:#f92672">}</span> <span style="color:#f92672">${</span>SRC_LIST<span style="color:#f92672">}</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span>TARGET_LINK_LIBRARIES (<span style="color:#f92672">${</span>PROJECT_NAME<span style="color:#f92672">}</span> <span style="color:#e6db74">dl</span> <span style="color:#e6db74">pthread</span> <span style="color:#e6db74">crypto</span> <span style="color:#e6db74">ldap</span> <span style="color:#e6db74">lber</span> <span style="color:#e6db74">pcre</span> <span style="color:#e6db74">ssl</span> <span style="color:#e6db74">crypto</span> <span style="color:#e6db74">dl</span> <span style="color:#e6db74">pthread</span> <span style="color:#e6db74">z</span> <span style="color:#e6db74">xml2</span> <span style="color:#e6db74">xslt</span> <span style="color:#e6db74">exslt</span>)<span style="color:#960050;background-color:#1e0010">
+</span></span></span></code></pre></div>
+</article>
+
+
+
+<div align="center">Copy right of dilfish, and all rights reserved!</div>
+</body>
+
+</html>

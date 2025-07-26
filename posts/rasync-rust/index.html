@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
+     crossorigin="anonymous"></script>
+    </head>
+<title>异步rust | Dilfish&#39;s Blog</title>
+<meta charset="utf-8">
+<meta name="generator" content="Hugo 0.147.8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://blog.871116.xyz/css/index.css">
+<link rel="stylesheet" href="https://blog.871116.xyz/css/classes.css">
+<link rel="canonical" href="https://blog.871116.xyz/posts/rasync-rust/">
+<link rel="alternate" type="application/rss+xml" href="" title="Dilfish&#39;s Blog">
+
+<body>
+
+<header class="icons">
+  
+    <a href="https://blog.871116.xyz/">Dilfish&#39;s Blog</a>
+  
+    <a href="https://871116.xyz">Homepage</a>
+  
+  
+</header>
+
+<article>
+  <header>
+    <h1>异步rust</h1>
+    <time datetime="2023-02-10T20:35:29&#43;08:00">February 10, 2023</time>
+  </header>
+  <h1 id="future">Future</h1>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">pub</span> <span style="color:#66d9ef">enum</span> <span style="color:#a6e22e">Poll</span><span style="color:#f92672">&lt;</span>T<span style="color:#f92672">&gt;</span> {
+</span></span><span style="display:flex;"><span>    Ready(T),
+</span></span><span style="display:flex;"><span>    Pending,
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">pub</span> <span style="color:#66d9ef">trait</span> Future {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">type</span> <span style="color:#a6e22e">Output</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">poll</span>(self: <span style="color:#a6e22e">Pin</span><span style="color:#f92672">&lt;&amp;</span><span style="color:#66d9ef">mut</span> Self<span style="color:#f92672">&gt;</span>, cx: <span style="color:#66d9ef">&amp;</span><span style="color:#a6e22e">mut</span> Context<span style="color:#f92672">&lt;</span>&#39;_<span style="color:#f92672">&gt;</span>) -&gt; <span style="color:#a6e22e">Poll</span><span style="color:#f92672">&lt;</span>Self::Output<span style="color:#f92672">&gt;</span>;
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>Poll 是一个 enum，他要么返回一个 Pending，要么返回一个 Ready(T)，而 Future 中的 Output 就是这里的 T 类型。</p>
+<p>如果返回 Pending，表示任务没有完成，如果返回 Ready(T)，表示任务结束。</p>
+<p>如果一个函数返回了 Future，则这个函数是异步的，可以被异步调用。</p>
+<p>但是直接使用 Future 类型无法调用 fut:Future, fut.poll，而必须使用 Pin&lt;&amp;mut Fut&gt;</p>
+<h2 id="pin">Pin</h2>
+<p>Pin 是为了解决自指问题，例如：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-c" data-lang="c"><span style="display:flex;"><span><span style="color:#66d9ef">struct</span> item {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">int</span> data;
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">int</span> <span style="color:#f92672">*</span>ptr;
+</span></span><span style="display:flex;"><span>};
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">struct</span> item item;
+</span></span><span style="display:flex;"><span>item.ptr <span style="color:#f92672">=</span> <span style="color:#f92672">&amp;</span>item.data;
+</span></span></code></pre></div><p>当 item 在内存中移动时，item.ptr 就指向了非预期的内存。</p>
+<p>不存在自指情况的类型都自动实现了一个 trait 叫 Unpin。而像上述的类型叫做!Unpin，如果想要安全地使用这些类型，则必须要使用 Pin<!-- raw HTML omitted -->.</p>
+<p>访问 Pin<!-- raw HTML omitted --> 类型使用的方法叫 projection （投射）：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#75715e">// Putting data into Pin
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#66d9ef">pub</span>        <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">new</span>          <span style="color:#f92672">&lt;</span>P: <span style="color:#a6e22e">Deref</span><span style="color:#f92672">&lt;</span>Target:Unpin<span style="color:#f92672">&gt;&gt;</span>(pointer: <span style="color:#a6e22e">P</span>) -&gt; <span style="color:#a6e22e">Pin</span><span style="color:#f92672">&lt;</span>P<span style="color:#f92672">&gt;</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">pub</span> <span style="color:#66d9ef">unsafe</span> <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">new_unchecked</span><span style="color:#f92672">&lt;</span>P<span style="color:#f92672">&gt;</span>                     (pointer: <span style="color:#a6e22e">P</span>) -&gt; <span style="color:#a6e22e">Pin</span><span style="color:#f92672">&lt;</span>P<span style="color:#f92672">&gt;</span>;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">// Getting data from Pin
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#66d9ef">pub</span>        <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">into_inner</span>          <span style="color:#f92672">&lt;</span>P: <span style="color:#a6e22e">Deref</span><span style="color:#f92672">&lt;</span>Target: Unpin<span style="color:#f92672">&gt;&gt;</span>(pin: <span style="color:#a6e22e">Pin</span><span style="color:#f92672">&lt;</span>P<span style="color:#f92672">&gt;</span>) -&gt; <span style="color:#a6e22e">P</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">pub</span> <span style="color:#66d9ef">unsafe</span> <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">into_inner_unchecked</span><span style="color:#f92672">&lt;</span>P<span style="color:#f92672">&gt;</span>                      (pin: <span style="color:#a6e22e">Pin</span><span style="color:#f92672">&lt;</span>P<span style="color:#f92672">&gt;</span>) -&gt; <span style="color:#a6e22e">P</span>;
+</span></span></code></pre></div><h2 id="不能阻塞执行器executor">不能阻塞执行器(executor)</h2>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">use</span> std::time::Duration;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">use</span> tokio::time::sleep;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#[tokio::main(flavor = </span><span style="color:#e6db74">&#34;current_thread&#34;</span><span style="color:#75715e">)]</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">main</span>() {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> one <span style="color:#f92672">=</span> tokio::spawn(greet());
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> two <span style="color:#f92672">=</span> tokio::spawn(greet());
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> (_, _) <span style="color:#f92672">=</span> tokio::<span style="color:#a6e22e">join!</span>(one, two);
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">greet</span>() {
+</span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">println!</span>(<span style="color:#e6db74">&#34;Hello!&#34;</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// await 执行结束之后打印
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    <span style="color:#75715e">// await 让程序异步 sleep 而不阻塞
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    sleep(Duration::from_millis(<span style="color:#ae81ff">500</span>)).<span style="color:#66d9ef">await</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">println!</span>(<span style="color:#e6db74">&#34;Goodbye!&#34;</span>);
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><h2 id="future-通知被-poll">Future 通知被 Poll</h2>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">impl</span> Future <span style="color:#66d9ef">for</span> MyFuture {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">type</span> <span style="color:#a6e22e">Output</span> <span style="color:#f92672">=</span> ();
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">poll</span>(self: <span style="color:#a6e22e">Pin</span><span style="color:#f92672">&lt;&amp;</span><span style="color:#66d9ef">mut</span> Self<span style="color:#f92672">&gt;</span>, cx: <span style="color:#66d9ef">&amp;</span><span style="color:#a6e22e">mut</span> Context<span style="color:#f92672">&lt;</span>&#39;_<span style="color:#f92672">&gt;</span>) -&gt; <span style="color:#a6e22e">Poll</span><span style="color:#f92672">&lt;</span>Self::Output<span style="color:#f92672">&gt;</span> {
+</span></span><span style="display:flex;"><span>        <span style="color:#a6e22e">println!</span>(<span style="color:#e6db74">&#34;MyFuture::poll()&#34;</span>);
+</span></span><span style="display:flex;"><span>        <span style="color:#75715e">// 通知再次被调用
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        cx.waker().wake_by_ref();
+</span></span><span style="display:flex;"><span>        Poll::Pending
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>ref:https://blog.cloudflare.com/pin-and-unpin-in-rust/
+ref:https://fasterthanli.me/articles/pin-and-suffering</p>
+
+</article>
+
+
+
+<div align="center">Copy right of dilfish, and all rights reserved!</div>
+</body>
+
+</html>
