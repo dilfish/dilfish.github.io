@@ -1,45 +1,52 @@
 <!DOCTYPE html>
 <html lang="en-us">
+
 <head>
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
-     crossorigin="anonymous"></script>
-    </head>
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
+    crossorigin="anonymous"></script>
+</head>
 <title>golang 内存模型里的小细节 | Dilfish&#39;s Blog</title>
 <meta charset="utf-8">
 <meta name="generator" content="Hugo 0.147.8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="https://blog.871116.xyz/css/index.css">
-<link rel="stylesheet" href="https://blog.871116.xyz/css/classes.css">
-<link rel="canonical" href="https://blog.871116.xyz/posts/small-tricks-in-golang-mm/">
+<link rel="stylesheet" href="https://dilfish.github.io/css/index.css">
+<link rel="stylesheet" href="https://dilfish.github.io/css/classes.css">
+<link rel="canonical" href="https://dilfish.github.io/posts/small-tricks-in-golang-mm/">
 <link rel="alternate" type="application/rss+xml" href="" title="Dilfish&#39;s Blog">
 
 <body>
 
-<header class="icons">
-  
-    <a href="https://blog.871116.xyz/">Dilfish&#39;s Blog</a>
-  
-    <a href="https://871116.xyz">Homepage</a>
-  
-  
-</header>
+  <header class="icons">
 
-<article>
-  <header>
-    <h1>golang 内存模型里的小细节</h1>
-    <time datetime="2021-09-17T18:32:11&#43;08:00">September 17, 2021</time>
+    <a href="https://dilfish.github.io/">Dilfish&#39;s Blog</a>
+
+    <a href="https://871116.xyz">Homepage</a>
+
+
   </header>
-  <h2 id="起因">起因</h2>
-<p>最近看完了 Russ Cox 写的那个<a href="https://research.swtch.com/mm"> Memory Models </a>老三篇，顺便又仔细看了一遍 go 官方的<a href="https://golang.org/ref/mem">那个文档</a>。</p>
-<h2 id="问题一">问题一</h2>
-<p>官方文档里面有这么一句话：<code>A receive from an unbuffered channel happens before the send on that channel completes.</code>不仔细看会以为这个话的意思是管道的接收操作发生在发送操作之前。实际上这句话里面 completes 是形容 send 的，意思是说，接收操作发生在发送完成之前。</p>
-<p>也就是说，在没接收的时候，发送操作是不能完成（返回）的。</p>
-<p>同样的，对应的那句是：<code>A send on a channel happens before the corresponding receive from that channel completes.</code>意思是发送操作发生在接收完成之前，也就是说，没有发送操作，接收操作是不能完成的（这个很显然）。而上面那个命题就必须加一个 unbuffered 限定条件。</p>
-<p>也就是说，他用两个偏序关系定义了一个相等/同时关系。</p>
-<p>可能相等的描述起来会比较麻烦，如果操作是时间点还好说，如果是时间段的话，那这个同时的意思是，同时结束。</p>
-<h4 id="update-20220208">update 20220208</h4>
-<p>看看下面这个程序输出：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-go" data-lang="go"><span style="display:flex;"><span><span style="color:#f92672">package</span> <span style="color:#a6e22e">main</span>
+
+  <article>
+    <header>
+      <h1>golang 内存模型里的小细节</h1>
+      <time datetime="2021-09-17T18:32:11&#43;08:00">September 17, 2021</time>
+    </header>
+    <h2 id="起因">起因</h2>
+    <p>最近看完了 Russ Cox 写的那个<a href="https://research.swtch.com/mm"> Memory Models </a>老三篇，顺便又仔细看了一遍 go 官方的<a
+        href="https://golang.org/ref/mem">那个文档</a>。</p>
+    <h2 id="问题一">问题一</h2>
+    <p>
+      官方文档里面有这么一句话：<code>A receive from an unbuffered channel happens before the send on that channel completes.</code>不仔细看会以为这个话的意思是管道的接收操作发生在发送操作之前。实际上这句话里面
+      completes 是形容 send 的，意思是说，接收操作发生在发送完成之前。</p>
+    <p>也就是说，在没接收的时候，发送操作是不能完成（返回）的。</p>
+    <p>
+      同样的，对应的那句是：<code>A send on a channel happens before the corresponding receive from that channel completes.</code>意思是发送操作发生在接收完成之前，也就是说，没有发送操作，接收操作是不能完成的（这个很显然）。而上面那个命题就必须加一个
+      unbuffered 限定条件。</p>
+    <p>也就是说，他用两个偏序关系定义了一个相等/同时关系。</p>
+    <p>可能相等的描述起来会比较麻烦，如果操作是时间点还好说，如果是时间段的话，那这个同时的意思是，同时结束。</p>
+    <h4 id="update-20220208">update 20220208</h4>
+    <p>看看下面这个程序输出：</p>
+    <div class="highlight">
+      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-go" data-lang="go"><span style="display:flex;"><span><span style="color:#f92672">package</span> <span style="color:#a6e22e">main</span>
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> (
 </span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;log&#34;</span>
@@ -55,24 +62,31 @@
 </span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">ch</span> <span style="color:#f92672">&lt;-</span> <span style="color:#66d9ef">struct</span>{}{}
 </span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">log</span>.<span style="color:#a6e22e">Println</span>(<span style="color:#e6db74">&#34;good closing&#34;</span>)
 </span></span><span style="display:flex;"><span>}
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>➜   testch 😈 ./testch
+</span></span></code></pre>
+    </div>
+    <div class="highlight">
+      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>➜   testch 😈 ./testch
 </span></span><span style="display:flex;"><span>panic: send on closed channel
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>goroutine <span style="color:#ae81ff">1</span> <span style="color:#f92672">[</span>running<span style="color:#f92672">]</span>:
 </span></span><span style="display:flex;"><span>main.main<span style="color:#f92672">()</span>
 </span></span><span style="display:flex;"><span>	/Users/dilfish/go/src/testch/main.go:14 +0x7e
-</span></span></code></pre></div><h2 id="问题二">问题二</h2>
-<p>sync.RWMutex，这个属于之前没有仔细看。
-<code>If a goroutine holds a RWMutex for reading and another goroutine might call Lock, no goroutine should expect to be able to acquire a read lock until the initial read lock is released. In particular, this prohibits recursive read locking. This is to ensure that the lock eventually becomes available; a blocked Lock call excludes new readers from acquiring the lock.</code>
-这个意思是说写锁的优先级高于读锁。</p>
-<h2 id="计划">计划</h2>
-<p>后续打算看看这个长文<a href="https://go.dev/blog/ismmkeynote"> Getting to Go: The Journey of Go&rsquo;s Garbage Collector</a></p>
+</span></span></code></pre>
+    </div>
+    <h2 id="问题二">问题二</h2>
+    <p>sync.RWMutex，这个属于之前没有仔细看。
+      <code>If a goroutine holds a RWMutex for reading and another goroutine might call Lock, no goroutine should expect to be able to acquire a read lock until the initial read lock is released. In particular, this prohibits recursive read locking. This is to ensure that the lock eventually becomes available; a blocked Lock call excludes new readers from acquiring the lock.</code>
+      这个意思是说写锁的优先级高于读锁。
+    </p>
+    <h2 id="计划">计划</h2>
+    <p>后续打算看看这个长文<a href="https://go.dev/blog/ismmkeynote"> Getting to Go: The Journey of Go&rsquo;s Garbage
+        Collector</a></p>
 
-</article>
+  </article>
 
 
 
-<div align="center">Copy right of dilfish, and all rights reserved!</div>
+  <div align="center">Copy right of dilfish, and all rights reserved!</div>
 </body>
 
 </html>

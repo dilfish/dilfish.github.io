@@ -1,58 +1,64 @@
 <!DOCTYPE html>
 <html lang="en-us">
+
 <head>
     <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
-     crossorigin="anonymous"></script>
-    </head>
+        crossorigin="anonymous"></script>
+</head>
 <title>Rust 的 lifetime | Dilfish&#39;s Blog</title>
 <meta charset="utf-8">
 <meta name="generator" content="Hugo 0.147.8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="https://blog.871116.xyz/css/index.css">
-<link rel="stylesheet" href="https://blog.871116.xyz/css/classes.css">
-<link rel="canonical" href="https://blog.871116.xyz/posts/lifetime-in-rust/">
+<link rel="stylesheet" href="https://dilfish.github.io/css/index.css">
+<link rel="stylesheet" href="https://dilfish.github.io/css/classes.css">
+<link rel="canonical" href="https://dilfish.github.io/posts/lifetime-in-rust/">
 <link rel="alternate" type="application/rss+xml" href="" title="Dilfish&#39;s Blog">
 
 <body>
 
-<header class="icons">
-  
-    <a href="https://blog.871116.xyz/">Dilfish&#39;s Blog</a>
-  
-    <a href="https://871116.xyz">Homepage</a>
-  
-  
-</header>
+    <header class="icons">
 
-<article>
-  <header>
-    <h1>Rust 的 lifetime</h1>
-    <time datetime="2021-12-21T16:11:45&#43;08:00">December 21, 2021</time>
-  </header>
-  <p>本文是阅读<a href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html">Validating References with Lifetimes</a>  的笔记。</p>
-<p><code>Lifetime annotations don’t change how long any of the references live. Rather, they describe the relationships of the lifetimes of multiple references to each other without affecting the lifetimes. Just as functions can accept any type when the signature specifies a generic type parameter, functions can accept references with any lifetime by specifying a generic lifetime parameter.</code></p>
-<p>lifetime 这个特性对于 c/c++ 系的程序员是比较好接受的，归根结底就是一句话，指针指向的对象不能提前释放，以免指针解引用失败。</p>
-<p>对于 rust 而言，一般的对象所谓&quot;释放&quot;就是生命周期结束。rust 的 lifetime 分为两类，一类是函数返回值，一类是 struct。</p>
-<p>函数的例子如下：</p>
-<pre tabindex="0"><code>fn longest&lt;&#39;a&gt;(x: &amp;&#39;a str, y: &amp;&#39;a str) -&gt; &amp;&#39;a str {
+        <a href="https://dilfish.github.io/">Dilfish&#39;s Blog</a>
+
+        <a href="https://871116.xyz">Homepage</a>
+
+
+    </header>
+
+    <article>
+        <header>
+            <h1>Rust 的 lifetime</h1>
+            <time datetime="2021-12-21T16:11:45&#43;08:00">December 21, 2021</time>
+        </header>
+        <p>本文是阅读<a href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html">Validating References with
+                Lifetimes</a> 的笔记。</p>
+        <p><code>Lifetime annotations don’t change how long any of the references live. Rather, they describe the relationships of the lifetimes of multiple references to each other without affecting the lifetimes. Just as functions can accept any type when the signature specifies a generic type parameter, functions can accept references with any lifetime by specifying a generic lifetime parameter.</code>
+        </p>
+        <p>lifetime 这个特性对于 c/c++ 系的程序员是比较好接受的，归根结底就是一句话，指针指向的对象不能提前释放，以免指针解引用失败。</p>
+        <p>对于 rust 而言，一般的对象所谓&quot;释放&quot;就是生命周期结束。rust 的 lifetime 分为两类，一类是函数返回值，一类是 struct。</p>
+        <p>函数的例子如下：</p>
+        <pre tabindex="0"><code>fn longest&lt;&#39;a&gt;(x: &amp;&#39;a str, y: &amp;&#39;a str) -&gt; &amp;&#39;a str {
     if x.len() &gt; y.len() {
         x
     } else {
         y
     }
 }
-</code></pre><p>返回值引用的对象可能是参数的二者之一，因此，返回值的生命周期必须小于等于两个参数中小的那个。如果大于，那么当参数释放之后，返回值引用的内存就非法了。因此必须是返回值先释放。rust 这块的标记方法和所谓的 rules 可以说是一塌糊涂。不说也罢。</p>
-<p>对于结构体来说也是类似的，如果结构体里面有成员引用了其他内存，那引用的内存的生命周期必须大于结构体本身的生命周期，不然引用内存先释放，结构体成员引用的就是非法内存了。</p>
-<pre tabindex="0"><code>struct ImportantExcerpt&lt;&#39;a&gt; {
+</code></pre>
+        <p>返回值引用的对象可能是参数的二者之一，因此，返回值的生命周期必须小于等于两个参数中小的那个。如果大于，那么当参数释放之后，返回值引用的内存就非法了。因此必须是返回值先释放。rust 这块的标记方法和所谓的 rules
+            可以说是一塌糊涂。不说也罢。</p>
+        <p>对于结构体来说也是类似的，如果结构体里面有成员引用了其他内存，那引用的内存的生命周期必须大于结构体本身的生命周期，不然引用内存先释放，结构体成员引用的就是非法内存了。</p>
+        <pre tabindex="0"><code>struct ImportantExcerpt&lt;&#39;a&gt; {
     part: &amp;&#39;a str,
 }
-</code></pre><p>再次吐槽下这个标记，真二啊。</p>
+</code></pre>
+        <p>再次吐槽下这个标记，真二啊。</p>
 
-</article>
+    </article>
 
 
 
-<div align="center">Copy right of dilfish, and all rights reserved!</div>
+    <div align="center">Copy right of dilfish, and all rights reserved!</div>
 </body>
 
 </html>

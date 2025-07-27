@@ -1,67 +1,82 @@
 <!DOCTYPE html>
 <html lang="en-us">
+
 <head>
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
-     crossorigin="anonymous"></script>
-    </head>
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
+    crossorigin="anonymous"></script>
+</head>
 <title>Rust 杂项 | Dilfish&#39;s Blog</title>
 <meta charset="utf-8">
 <meta name="generator" content="Hugo 0.147.8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="https://blog.871116.xyz/css/index.css">
-<link rel="stylesheet" href="https://blog.871116.xyz/css/classes.css">
-<link rel="canonical" href="https://blog.871116.xyz/posts/rust-misc/">
+<link rel="stylesheet" href="https://dilfish.github.io/css/index.css">
+<link rel="stylesheet" href="https://dilfish.github.io/css/classes.css">
+<link rel="canonical" href="https://dilfish.github.io/posts/rust-misc/">
 <link rel="alternate" type="application/rss+xml" href="" title="Dilfish&#39;s Blog">
 
 <body>
 
-<header class="icons">
-  
-    <a href="https://blog.871116.xyz/">Dilfish&#39;s Blog</a>
-  
-    <a href="https://871116.xyz">Homepage</a>
-  
-  
-</header>
+  <header class="icons">
 
-<article>
-  <header>
-    <h1>Rust 杂项</h1>
-    <time datetime="2022-08-12T10:53:03&#43;08:00">August 12, 2022</time>
+    <a href="https://dilfish.github.io/">Dilfish&#39;s Blog</a>
+
+    <a href="https://871116.xyz">Homepage</a>
+
+
   </header>
-  <h3 id="async-await">async, .await</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">do_something</span>() { <span style="color:#75715e">/* ... */</span> }
-</span></span></code></pre></div><p>async 函数返回的值叫 Future，而 Future 必须由 executor 执行：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">use</span> futures::executor::block_on;
+
+  <article>
+    <header>
+      <h1>Rust 杂项</h1>
+      <time datetime="2022-08-12T10:53:03&#43;08:00">August 12, 2022</time>
+    </header>
+    <h3 id="async-await">async, .await</h3>
+    <div class="highlight">
+      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">do_something</span>() { <span style="color:#75715e">/* ... */</span> }
+</span></span></code></pre>
+    </div>
+    <p>async 函数返回的值叫 Future，而 Future 必须由 executor 执行：</p>
+    <div class="highlight">
+      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">use</span> futures::executor::block_on;
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">let</span> future <span style="color:#f92672">=</span> hello_world(); <span style="color:#75715e">// Nothing is printed
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>block_on(future); <span style="color:#75715e">// `future` is run and &#34;hello, world!&#34; is printed
-</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">learn_and_sing</span>() {
+</span></span></span></code></pre>
+    </div>
+    <div class="highlight">
+      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">learn_and_sing</span>() {
 </span></span><span style="display:flex;"><span>    <span style="color:#75715e">// Wait until the song has been learned before singing it.
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    <span style="color:#75715e">// We use `.await` here rather than `block_on` to prevent blocking the
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    <span style="color:#75715e">// thread, which makes it possible to `dance` at the same time.
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    <span style="color:#66d9ef">let</span> song <span style="color:#f92672">=</span> learn_song().<span style="color:#66d9ef">await</span>;
 </span></span><span style="display:flex;"><span>    sing_song(song).<span style="color:#66d9ef">await</span>;
 </span></span><span style="display:flex;"><span>}
-</span></span></code></pre></div><p>上面的代码在调度过程中，learn_song 函数异步执行，但是执行完成之后才会执行 sing_song，而 sing_song 执行完之后函数 learn_and_sing 才会返回。</p>
-<p>sing_song 的 await 也是必要的，不然 sing_song 不会执行。</p>
-<h3 id="phantomdata">phantomdata</h3>
-<p>phantomdata 解释最好的文章是这个：
-<a href="http://troubles.md/why-phantomdata/">why phantomdata</a>
-本文也解释了 subtyping 和 variance 的内容。
-<img src="https://blog.871116.xyz/pics/variance.png" alt="subtypoing">
-当然还有官方的文档：
-<a href="https://doc.rust-lang.org/nomicon/phantom-data.html">phantom data</a>
-<a href="https://doc.rust-lang.org/nomicon/subtyping.html">sub typing</a></p>
-<p>phantomdata 例如：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">use</span> std::marker;
+</span></span></code></pre>
+    </div>
+    <p>上面的代码在调度过程中，learn_song 函数异步执行，但是执行完成之后才会执行 sing_song，而 sing_song 执行完之后函数 learn_and_sing 才会返回。</p>
+    <p>sing_song 的 await 也是必要的，不然 sing_song 不会执行。</p>
+    <h3 id="phantomdata">phantomdata</h3>
+    <p>phantomdata 解释最好的文章是这个：
+      <a href="http://troubles.md/why-phantomdata/">why phantomdata</a>
+      本文也解释了 subtyping 和 variance 的内容。
+      <img src="https://dilfish.github.io/pics/variance.png" alt="subtypoing">
+      当然还有官方的文档：
+      <a href="https://doc.rust-lang.org/nomicon/phantom-data.html">phantom data</a>
+      <a href="https://doc.rust-lang.org/nomicon/subtyping.html">sub typing</a>
+    </p>
+    <p>phantomdata 例如：</p>
+    <div class="highlight">
+      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">use</span> std::marker;
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">struct</span> <span style="color:#a6e22e">Iter</span><span style="color:#f92672">&lt;</span><span style="color:#a6e22e">&#39;a</span>, T: <span style="color:#a6e22e">&#39;a</span><span style="color:#f92672">&gt;</span> {
 </span></span><span style="display:flex;"><span>    ptr: <span style="color:#f92672">*</span><span style="color:#66d9ef">const</span> T,
 </span></span><span style="display:flex;"><span>    end: <span style="color:#f92672">*</span><span style="color:#66d9ef">const</span> T,
 </span></span><span style="display:flex;"><span>    <span style="color:#75715e">// _marker: marker::PhantomData&lt;&amp;&#39;a T&gt;,
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>}
-</span></span></code></pre></div><p>对于 [T] 的 iter 实现可能像上面这样，raw pointer 没有 lifetime，则可以添加一个 phantom data 来实现 lifetime 约束。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">use</span> std::marker;
+</span></span></code></pre>
+    </div>
+    <p>对于 [T] 的 iter 实现可能像上面这样，raw pointer 没有 lifetime，则可以添加一个 phantom data 来实现 lifetime 约束。</p>
+    <div class="highlight">
+      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">use</span> std::marker;
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">struct</span> Vec<span style="color:#f92672">&lt;</span>T<span style="color:#f92672">&gt;</span> {
 </span></span><span style="display:flex;"><span>    data: <span style="color:#f92672">*</span><span style="color:#66d9ef">const</span> T, <span style="color:#75715e">// *const for variance!
@@ -69,22 +84,26 @@
 </span></span><span style="display:flex;"><span>    cap: <span style="color:#66d9ef">usize</span>,
 </span></span><span style="display:flex;"><span>    <span style="color:#75715e">// _marker: marker::PhantomData&lt;T&gt;,
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>}
-</span></span></code></pre></div><p>因为 const raw pointer 不能修改内容，所以 drop checker 认为 Vec 不拥有数据，也可以通过 phantom data 来指示，销毁 Vec 的同时，销毁 T。</p>
-<p><img src="https://blog.871116.xyz/pics/phantomdata.png" alt="如图"></p>
-<h3 id="infallable">infallable</h3>
-<p>Infallable 的用处比较简单，就是在 trait 或者参数需求的时候的一个占位符。</p>
-<h3 id="dyn">dyn</h3>
-<p><a href="https://doc.rust-lang.org/rust-by-example/trait/dyn.html">https://doc.rust-lang.org/rust-by-example/trait/dyn.html</a></p>
-<h3 id="heading">?</h3>
-<p>? 叫做 error propagation，相当于简化了 go 语言里面的 if err != nil 这个表达式。</p>
-<h3 id="fn-fnmut-fnonce">Fn, FnMut, FnOnce</h3>
-<p>这三个 trait 实现之后，对象就可以进行调用(callable)。</p>
+</span></span></code></pre>
+    </div>
+    <p>因为 const raw pointer 不能修改内容，所以 drop checker 认为 Vec 不拥有数据，也可以通过 phantom data 来指示，销毁 Vec 的同时，销毁 T。</p>
+    <p><img src="https://dilfish.github.io/pics/phantomdata.png" alt="如图"></p>
+    <h3 id="infallable">infallable</h3>
+    <p>Infallable 的用处比较简单，就是在 trait 或者参数需求的时候的一个占位符。</p>
+    <h3 id="dyn">dyn</h3>
+    <p><a
+        href="https://doc.rust-lang.org/rust-by-example/trait/dyn.html">https://doc.rust-lang.org/rust-by-example/trait/dyn.html</a>
+    </p>
+    <h3 id="heading">?</h3>
+    <p>? 叫做 error propagation，相当于简化了 go 语言里面的 if err != nil 这个表达式。</p>
+    <h3 id="fn-fnmut-fnonce">Fn, FnMut, FnOnce</h3>
+    <p>这三个 trait 实现之后，对象就可以进行调用(callable)。</p>
 
-</article>
+  </article>
 
 
 
-<div align="center">Copy right of dilfish, and all rights reserved!</div>
+  <div align="center">Copy right of dilfish, and all rights reserved!</div>
 </body>
 
 </html>

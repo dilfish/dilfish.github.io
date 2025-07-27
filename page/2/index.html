@@ -1,19 +1,20 @@
 <div class="container">
   <!DOCTYPE html>
-<html lang="en-us">
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <html lang="en-us">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 
 
 
-<title>Dilfish&#39;s Blog</title>
+  <title>Dilfish&#39;s Blog</title>
 
-<link rel="stylesheet" href="https://blog.871116.xyz/css/styles.css">
+  <link rel="stylesheet" href="https://dilfish.github.io/css/styles.css">
 
-<link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.2.0/css/all.css" 
-integrity="sha384-hWVjflwFxL6sNzntih27bfxkr27PmbbK/iSvJ+a4+0owXq79v+lsFkW54bOGbiDQ" crossorigin="anonymous">
-<script src="https://code.jquery.com/jquery-3.3.1.js" integrity="sha256-2Kok7MbOyxpgUVvAk/HJ2jigOSYS2auK4Pfzbm7uH60=" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.2.0/css/all.css"
+    integrity="sha384-hWVjflwFxL6sNzntih27bfxkr27PmbbK/iSvJ+a4+0owXq79v+lsFkW54bOGbiDQ" crossorigin="anonymous">
+  <script src="https://code.jquery.com/jquery-3.3.1.js" integrity="sha256-2Kok7MbOyxpgUVvAk/HJ2jigOSYS2auK4Pfzbm7uH60="
+    crossorigin="anonymous"></script>
 
 
 
@@ -24,289 +25,312 @@ integrity="sha384-hWVjflwFxL6sNzntih27bfxkr27PmbbK/iSvJ+a4+0owXq79v+lsFkW54bOGbi
   <div class="container">
     <nav class="navbar level">
       <div class="navbar-brand">
-          <a class="nav-item" href="https://blog.871116.xyz/"><h1 class="title is-3">Dilfish&#39;s Blog</h1></a>
-      </div>           
+        <a class="nav-item" href="https://dilfish.github.io/">
+          <h1 class="title is-3">Dilfish&#39;s Blog</h1>
+        </a>
+      </div>
       <div class="navbar-menu has-text-centered is-active">
-          <div class="navbar-end is-centered">
-              
-                <a href="https://blog.871116.xyz/about.html" rel="me">
-                  <span class="icon">
-                    <i class="fas fa-info"></i>
-                  </span>
-                </a>
-              
-           </div>
+        <div class="navbar-end is-centered">
+
+          <a href="https://dilfish.github.io/about.html" rel="me">
+            <span class="icon">
+              <i class="fas fa-info"></i>
+            </span>
+          </a>
+
+        </div>
       </div>
     </nav>
   </div>
 
   <main class="container">
-      
-      
-      <h1 class="title is-3">2020</h1>
-      
-      <article class="columns">
-        <div class="column is-2">
-          <h6 class="is-inline" style="white-space: nowrap">Dec 10</h2>
-        </div>
-        <div class="column">
-          <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a href="https://blog.dilfish.dev/posts/quic-look-http3/">tls1.3/http3 初探</a></h1>
+
+
+    <h1 class="title is-3">2020</h1>
+
+    <article class="columns">
+      <div class="column is-2">
+        <h6 class="is-inline" style="white-space: nowrap">Dec 10</h2>
+      </div>
+      <div class="column">
+        <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a
+            href="https://blog.dilfish.dev/posts/quic-look-http3/">tls1.3/http3 初探</a></h1>
           <div class="content is-hidden-mobile">
             上周有点忙，本来打算看完还是没看完。
-curl 编译可以支持 http2/http3 tls1.3 :
-https://github.com/curl/curl/blob/master/docs/HTTP3.md
-cloudflare 的边缘服务器可以认为是一个标准的 http3 server。
-nginx 怎么支持我还没看，好像 cloudflare 也发布了一个 patch。
-https://blog.cloudflare.com/experiment-with-http-3-using-nginx-and-quiche/
-HTTP 客户端发送请求时会带一个头叫 alpn:
-like this: ALPN: h2, http%2F1.1 https://httpwg.org/specs/rfc7639.html
-但是目前 http3 还没有带，不知道是不是还没标准化的缘故。 …
-            
+            curl 编译可以支持 http2/http3 tls1.3 :
+            https://github.com/curl/curl/blob/master/docs/HTTP3.md
+            cloudflare 的边缘服务器可以认为是一个标准的 http3 server。
+            nginx 怎么支持我还没看，好像 cloudflare 也发布了一个 patch。
+            https://blog.cloudflare.com/experiment-with-http-3-using-nginx-and-quiche/
+            HTTP 客户端发送请求时会带一个头叫 alpn:
+            like this: ALPN: h2, http%2F1.1 https://httpwg.org/specs/rfc7639.html
+            但是目前 http3 还没有带，不知道是不是还没标准化的缘故。 …
+
             <br>
             <a class="button is-marginless is-paddingless" href="https://blog.dilfish.dev/posts/quic-look-http3/">
-            <span class="icon-link is-small" style="line-height: 100%">
+              <span class="icon-link is-small" style="line-height: 100%">
                 <i class="fa fa-angle-double-right" aria-hidden="true"></i>
               </span>
               <p style="padding:0 5px"></p>more</p>
             </a>
-            
+
           </div>
-      </article>
-      
-      <article class="columns">
-        <div class="column is-2">
-          <h6 class="is-inline" style="white-space: nowrap">Oct 15</h2>
-        </div>
-        <div class="column">
-          <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a href="https://blog.dilfish.dev/posts/golang-http-link-ipv6/">golang 在 HTTP 中使用 scope link 的 IPv6 地址</a></h1>
+    </article>
+
+    <article class="columns">
+      <div class="column is-2">
+        <h6 class="is-inline" style="white-space: nowrap">Oct 15</h2>
+      </div>
+      <div class="column">
+        <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a
+            href="https://blog.dilfish.dev/posts/golang-http-link-ipv6/">golang 在 HTTP 中使用 scope link 的 IPv6 地址</a></h1>
           <div class="content is-hidden-mobile">
             例如 server 端接口名称为 bond0
-server 端命令：
-./http -s=true -i=:: -p=19999 client 端命令：
-./http -i=&#34;fe80::468a:5bff:fe3d:c6d2%25bond0&#34; -p=19999 其中 %25 是 &lsquo;%&rsquo; 的 HTTP 转码，代码如下：
-package main import ( &#34;flag&#34; &#34;io/ioutil&#34; &#34;log&#34; &#34;net/http&#34; ) var FlagServer = flag.Bool(&#34;s&#34;, false, &#34;if run as a server&#34;) var FlagIP = flag.String(&#34;i&#34;, …
-            
+            server 端命令：
+            ./http -s=true -i=:: -p=19999 client 端命令：
+            ./http -i=&#34;fe80::468a:5bff:fe3d:c6d2%25bond0&#34; -p=19999 其中 %25 是 &lsquo;%&rsquo; 的 HTTP 转码，代码如下：
+            package main import ( &#34;flag&#34; &#34;io/ioutil&#34; &#34;log&#34; &#34;net/http&#34; ) var FlagServer =
+            flag.Bool(&#34;s&#34;, false, &#34;if run as a server&#34;) var FlagIP = flag.String(&#34;i&#34;, …
+
             <br>
             <a class="button is-marginless is-paddingless" href="https://blog.dilfish.dev/posts/golang-http-link-ipv6/">
-            <span class="icon-link is-small" style="line-height: 100%">
+              <span class="icon-link is-small" style="line-height: 100%">
                 <i class="fa fa-angle-double-right" aria-hidden="true"></i>
               </span>
               <p style="padding:0 5px"></p>more</p>
             </a>
-            
+
           </div>
-      </article>
-      
-      <article class="columns">
-        <div class="column is-2">
-          <h6 class="is-inline" style="white-space: nowrap">Jun 25</h2>
-        </div>
-        <div class="column">
-          <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a href="https://blog.dilfish.dev/posts/ml-recap/">机器学习复习</a></h1>
+    </article>
+
+    <article class="columns">
+      <div class="column is-2">
+        <h6 class="is-inline" style="white-space: nowrap">Jun 25</h2>
+      </div>
+      <div class="column">
+        <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a
+            href="https://blog.dilfish.dev/posts/ml-recap/">机器学习复习</a></h1>
           <div class="content is-hidden-mobile">
-            As we will see later, the 𝐿2 loss corresponds to the assumption that our data was corrupted by Gaussian noise, whereas the 𝐿1 loss corresponds to an assumption of noise from a Laplace distribution.
-pytorch 里面的 broadcast 功能，如果是 3x2 + 2x1 则如何?
-参考资料：理解矩阵
-a vector norm is a function 𝑓 that maps a vector to a scalar,
-参考资料 向量微积分系列
-https://blog.csdn.net/u010976453/article/details/54381248 …
-            
+            As we will see later, the 𝐿2 loss corresponds to the assumption that our data was corrupted by Gaussian
+            noise, whereas the 𝐿1 loss corresponds to an assumption of noise from a Laplace distribution.
+            pytorch 里面的 broadcast 功能，如果是 3x2 + 2x1 则如何?
+            参考资料：理解矩阵
+            a vector norm is a function 𝑓 that maps a vector to a scalar,
+            参考资料 向量微积分系列
+            https://blog.csdn.net/u010976453/article/details/54381248 …
+
             <br>
             <a class="button is-marginless is-paddingless" href="https://blog.dilfish.dev/posts/ml-recap/">
-            <span class="icon-link is-small" style="line-height: 100%">
+              <span class="icon-link is-small" style="line-height: 100%">
                 <i class="fa fa-angle-double-right" aria-hidden="true"></i>
               </span>
               <p style="padding:0 5px"></p>more</p>
             </a>
-            
+
           </div>
-      </article>
-      
-      <article class="columns">
-        <div class="column is-2">
-          <h6 class="is-inline" style="white-space: nowrap">May 29</h2>
-        </div>
-        <div class="column">
-          <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a href="https://blog.dilfish.dev/posts/a-preliminary-question/">一道小学题目的思考</a></h1>
+    </article>
+
+    <article class="columns">
+      <div class="column is-2">
+        <h6 class="is-inline" style="white-space: nowrap">May 29</h2>
+      </div>
+      <div class="column">
+        <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a
+            href="https://blog.dilfish.dev/posts/a-preliminary-question/">一道小学题目的思考</a></h1>
           <div class="content is-hidden-mobile">
             ###缘起
-今天在抖音上面看到一个老师在讲小学数学题，很有意思的一个题目，我觉得值得深挖一下。也为以后的退路（码农失业当老师）做一点准备。
-题目1: 答案：60-47=13
-老师的解法是逆向思维，看完这个视频我们自然地会有三个问题。
-  如果我就是头铁要用正向思维，这个题目可以解吗？
-  正向的思维和逆向的思维难度一样吗，差别在哪？
-  导致这个差别的本质原因是什么？
-  正向思维 计算机系的同学都能看明白，这是一个典型的递归题。它的 trivial 形式是这样的：
-题目1.0: 一班60人，至少有多少人会0项技术？ 答案很简单，60人。
-好吧，这有点无聊。我们把这个题目分解为四个题目，然后依次来解决。
- 题目1.1：一班60人，42人会游泳，至少有多少人一项都会？ 题目1.2：一班60人，42人会游泳，46人会骑车，至少有多少人两项都会？ 题目1.3：一班60人，42人会游泳，46人会骑 …
-            
+            今天在抖音上面看到一个老师在讲小学数学题，很有意思的一个题目，我觉得值得深挖一下。也为以后的退路（码农失业当老师）做一点准备。
+            题目1: 答案：60-47=13
+            老师的解法是逆向思维，看完这个视频我们自然地会有三个问题。
+            如果我就是头铁要用正向思维，这个题目可以解吗？
+            正向的思维和逆向的思维难度一样吗，差别在哪？
+            导致这个差别的本质原因是什么？
+            正向思维 计算机系的同学都能看明白，这是一个典型的递归题。它的 trivial 形式是这样的：
+            题目1.0: 一班60人，至少有多少人会0项技术？ 答案很简单，60人。
+            好吧，这有点无聊。我们把这个题目分解为四个题目，然后依次来解决。
+            题目1.1：一班60人，42人会游泳，至少有多少人一项都会？ 题目1.2：一班60人，42人会游泳，46人会骑车，至少有多少人两项都会？ 题目1.3：一班60人，42人会游泳，46人会骑 …
+
             <br>
-            <a class="button is-marginless is-paddingless" href="https://blog.dilfish.dev/posts/a-preliminary-question/">
-            <span class="icon-link is-small" style="line-height: 100%">
+            <a class="button is-marginless is-paddingless"
+              href="https://blog.dilfish.dev/posts/a-preliminary-question/">
+              <span class="icon-link is-small" style="line-height: 100%">
                 <i class="fa fa-angle-double-right" aria-hidden="true"></i>
               </span>
               <p style="padding:0 5px"></p>more</p>
             </a>
-            
+
           </div>
-      </article>
-      
-      <article class="columns">
-        <div class="column is-2">
-          <h6 class="is-inline" style="white-space: nowrap">May 26</h2>
-        </div>
-        <div class="column">
-          <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a href="https://blog.dilfish.dev/posts/golang-transport/">Golang Transport</a></h1>
+    </article>
+
+    <article class="columns">
+      <div class="column is-2">
+        <h6 class="is-inline" style="white-space: nowrap">May 26</h2>
+      </div>
+      <div class="column">
+        <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a
+            href="https://blog.dilfish.dev/posts/golang-transport/">Golang Transport</a></h1>
           <div class="content is-hidden-mobile">
             最近我有一个需求，当发布了大量的域名资源到 CDN 时,需要去检测每个域名的资源是否预取成功。所以需要去 CDN 的每个边缘节点发送 HTTP 请求。特点是每次都是一个新的 Host。
-其中有个优化问题，golang 实现 net/http.Transport 的时候，建议用户只使用默认的 DefaultTransport。因为他自己会启动2个 goroutine 去管理连接的读写。同时也有一个 map 去管理连接的缓存。
-每一个正在请求的连接可以由调用的 Request 取消，而 idle 的连接则有2个函数可以控制。并且外部还有一个 Client.CloseIdleConnections 函数，其实现就是去调用 Transport 的对应函数。
-这样当客户端使用时，对于 HTTP 协议，应该使用同一个 Transport ，因为他可以支持多个 goroutine 调用。并且在不断开链接 …
-            
+            其中有个优化问题，golang 实现 net/http.Transport 的时候，建议用户只使用默认的 DefaultTransport。因为他自己会启动2个 goroutine 去管理连接的读写。同时也有一个
+            map 去管理连接的缓存。
+            每一个正在请求的连接可以由调用的 Request 取消，而 idle 的连接则有2个函数可以控制。并且外部还有一个 Client.CloseIdleConnections 函数，其实现就是去调用 Transport
+            的对应函数。
+            这样当客户端使用时，对于 HTTP 协议，应该使用同一个 Transport ，因为他可以支持多个 goroutine 调用。并且在不断开链接 …
+
             <br>
             <a class="button is-marginless is-paddingless" href="https://blog.dilfish.dev/posts/golang-transport/">
-            <span class="icon-link is-small" style="line-height: 100%">
+              <span class="icon-link is-small" style="line-height: 100%">
                 <i class="fa fa-angle-double-right" aria-hidden="true"></i>
               </span>
               <p style="padding:0 5px"></p>more</p>
             </a>
-            
+
           </div>
-      </article>
-      
-      <article class="columns">
-        <div class="column is-2">
-          <h6 class="is-inline" style="white-space: nowrap">Mar 27</h2>
-        </div>
-        <div class="column">
-          <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a href="https://blog.dilfish.dev/posts/web-learn/">Web 开发学习</a></h1>
+    </article>
+
+    <article class="columns">
+      <div class="column is-2">
+        <h6 class="is-inline" style="white-space: nowrap">Mar 27</h2>
+      </div>
+      <div class="column">
+        <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a
+            href="https://blog.dilfish.dev/posts/web-learn/">Web 开发学习</a></h1>
           <div class="content is-hidden-mobile">
             我是从2016年开始对 web 开发有兴趣，请教了鹏鹏很多次，加上自己看的各种资料，这边写一个总结的内容。
- 纯 html/css/js web 框架 后端的交互 浏览器的交互  纯 html/css/js 这块首推 shahowe的教程，比较全面且深入地讲解了 html/css 技术。学完这篇就可以有一个全局的理解，其他的内容可以查看文档得知。
-我还没有仔细看过原生 js 教程，用的时候基本都是抄代码。这样不太好，总是似懂非懂。最近找到一个挺好的教程。javascript tutorial。还是应该整体学习一遍，建立一个框架性的概念。
-web 框架 最开始鹏鹏推荐 purecss，这个项目上手快，也比较简单。可惜最近好些年也没有什么及时的更新。所以又看了另外一个流行的库 bootstrap。
-使用框架的时候主要还是使用其 css 布局的功能，js 因为原生的没有学好， …
-            
+            纯 html/css/js web 框架 后端的交互 浏览器的交互 纯 html/css/js 这块首推 shahowe的教程，比较全面且深入地讲解了 html/css
+            技术。学完这篇就可以有一个全局的理解，其他的内容可以查看文档得知。
+            我还没有仔细看过原生 js 教程，用的时候基本都是抄代码。这样不太好，总是似懂非懂。最近找到一个挺好的教程。javascript tutorial。还是应该整体学习一遍，建立一个框架性的概念。
+            web 框架 最开始鹏鹏推荐 purecss，这个项目上手快，也比较简单。可惜最近好些年也没有什么及时的更新。所以又看了另外一个流行的库 bootstrap。
+            使用框架的时候主要还是使用其 css 布局的功能，js 因为原生的没有学好， …
+
           </div>
-      </article>
-      
-      <article class="columns">
-        <div class="column is-2">
-          <h6 class="is-inline" style="white-space: nowrap">Mar 26</h2>
-        </div>
-        <div class="column">
-          <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a href="https://blog.dilfish.dev/posts/gen-nginx-cmake-file-for-clion-mac/">Mac 下为 Clion 生成 nginx 的 CMakeLists.txt 文件</a></h1>
+    </article>
+
+    <article class="columns">
+      <div class="column is-2">
+        <h6 class="is-inline" style="white-space: nowrap">Mar 26</h2>
+      </div>
+      <div class="column">
+        <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a
+            href="https://blog.dilfish.dev/posts/gen-nginx-cmake-file-for-clion-mac/">Mac 下为 Clion 生成 nginx 的
+            CMakeLists.txt 文件</a></h1>
           <div class="content is-hidden-mobile">
             CLion + nginx + Mac project(nginx)cmake_minimum_required(VERSION …
-            
+
           </div>
-      </article>
-      
-      <article class="columns">
-        <div class="column is-2">
-          <h6 class="is-inline" style="white-space: nowrap">Mar 3</h2>
-        </div>
-        <div class="column">
-          <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a href="https://blog.dilfish.dev/posts/reading-the-origins-of-political-order/">&lt;政治秩序的起源&gt;读后感</a></h1>
+    </article>
+
+    <article class="columns">
+      <div class="column is-2">
+        <h6 class="is-inline" style="white-space: nowrap">Mar 3</h2>
+      </div>
+      <div class="column">
+        <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a
+            href="https://blog.dilfish.dev/posts/reading-the-origins-of-political-order/">&lt;政治秩序的起源&gt;读后感</a></h1>
           <div class="content is-hidden-mobile">
             起因 读这个书的契机就是近日的新闻，有个住进方舱医院的小哥在读这本书。之前我还没有读过类似的书，对于历史和政治的理解都停留在高中时期。这本书给我最大的信息是科学化地讨论政治问题。
-本书对现代化的国家的定义是三点：
- 中央集权 负责制的政府 法制  从这三个方面起步，讲从前人类时代到法国大革命的一些列变革，也就是本书的副标题。
-本书讲述的总体思路和进化论的核心思路差不多，我认为是比较符合逻辑的。正像基因随机突变，而环境的变化却是突然的，但是基因表达的优势将会累积，并不能随着环境的变化而智能的变化。所以今时今日世界各国的情况也是历史的累积以及各种条件的影响。
-那么我们可以很容易地得出一个结论：不存在普世的政治体制。正如不存在一个普世的生物，可以完美适应各种环境。
-中央集权 书中讲到，古代中国是最早的中央集权的国家。意思是说，中央政府有能力将自己认为合理的命令下发到基层。如现在讲的党组织到连队类 …
-            
+            本书对现代化的国家的定义是三点：
+            中央集权 负责制的政府 法制 从这三个方面起步，讲从前人类时代到法国大革命的一些列变革，也就是本书的副标题。
+            本书讲述的总体思路和进化论的核心思路差不多，我认为是比较符合逻辑的。正像基因随机突变，而环境的变化却是突然的，但是基因表达的优势将会累积，并不能随着环境的变化而智能的变化。所以今时今日世界各国的情况也是历史的累积以及各种条件的影响。
+            那么我们可以很容易地得出一个结论：不存在普世的政治体制。正如不存在一个普世的生物，可以完美适应各种环境。
+            中央集权 书中讲到，古代中国是最早的中央集权的国家。意思是说，中央政府有能力将自己认为合理的命令下发到基层。如现在讲的党组织到连队类 …
+
           </div>
-      </article>
-      
-      <article class="columns">
-        <div class="column is-2">
-          <h6 class="is-inline" style="white-space: nowrap">Feb 21</h2>
-        </div>
-        <div class="column">
-          <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a href="https://blog.dilfish.dev/posts/understand-paxos/">理解 Paxos 算法</a></h1>
+    </article>
+
+    <article class="columns">
+      <div class="column is-2">
+        <h6 class="is-inline" style="white-space: nowrap">Feb 21</h2>
+      </div>
+      <div class="column">
+        <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a
+            href="https://blog.dilfish.dev/posts/understand-paxos/">理解 Paxos 算法</a></h1>
           <div class="content is-hidden-mobile">
-            本文参考资料是 Lamport 的两个论文： 1. Paxos Made Simple: http://research.microsoft.com/en-us/um/people/lamport/pubs/paxos-simple.pdf 2. Time, Clocks, and the Ordering of Events in a Distributed System: http://research.microsoft.com/en-us/um/people/lamport/pubs/time-clocks.pdf
-本文主要是翻译加注释 Paxos Made Simple 的 2.2 节。理解了这一节，其他部分就容易多了。参考论文2没有特别详细地读，粗看一遍以后用他的思路来理解 2.2 节事半功倍。
-时钟这个论文总结起来就是说，由于狭义相对论的关系，我们无法确定不相关的两个事件的发 …
-            
+            本文参考资料是 Lamport 的两个论文： 1. Paxos Made Simple:
+            http://research.microsoft.com/en-us/um/people/lamport/pubs/paxos-simple.pdf 2. Time, Clocks, and the
+            Ordering of Events in a Distributed System:
+            http://research.microsoft.com/en-us/um/people/lamport/pubs/time-clocks.pdf
+            本文主要是翻译加注释 Paxos Made Simple 的 2.2 节。理解了这一节，其他部分就容易多了。参考论文2没有特别详细地读，粗看一遍以后用他的思路来理解 2.2 节事半功倍。
+            时钟这个论文总结起来就是说，由于狭义相对论的关系，我们无法确定不相关的两个事件的发 …
+
             <br>
             <a class="button is-marginless is-paddingless" href="https://blog.dilfish.dev/posts/understand-paxos/">
-            <span class="icon-link is-small" style="line-height: 100%">
+              <span class="icon-link is-small" style="line-height: 100%">
                 <i class="fa fa-angle-double-right" aria-hidden="true"></i>
               </span>
               <p style="padding:0 5px"></p>more</p>
             </a>
-            
+
           </div>
-      </article>
-      
-      <article class="columns">
-        <div class="column is-2">
-          <h6 class="is-inline" style="white-space: nowrap">Feb 20</h2>
-        </div>
-        <div class="column">
-          <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a href="https://blog.dilfish.dev/posts/use-markdown/">使用markdown</a></h1>
+    </article>
+
+    <article class="columns">
+      <div class="column is-2">
+        <h6 class="is-inline" style="white-space: nowrap">Feb 20</h2>
+      </div>
+      <div class="column">
+        <h2 class="subtitle is-inline is-size-4-mobile is-size-3-desktop"><a
+            href="https://blog.dilfish.dev/posts/use-markdown/">使用markdown</a></h1>
           <div class="content is-hidden-mobile">
-            h1 Heading 8-) h2 Heading h3 Heading h4 Heading h5 Heading h6 Heading Horizontal Rules    Typographic replacements Enable typographer option to see result.
-(c) (C) (r) (R) (tm) (TM) (p) (P) +-
-test.. test&hellip; test&hellip;.. test?&hellip;.. test!&hellip;.
-!!!!!! ???? ,, &ndash; &mdash;
-&ldquo;Smartypants, double quotes&rdquo; and &lsquo;single quotes&rsquo;
-Emphasis This is bold text
-This is …
-            
+            h1 Heading 8-) h2 Heading h3 Heading h4 Heading h5 Heading h6 Heading Horizontal Rules Typographic
+            replacements Enable typographer option to see result.
+            (c) (C) (r) (R) (tm) (TM) (p) (P) +-
+            test.. test&hellip; test&hellip;.. test?&hellip;.. test!&hellip;.
+            !!!!!! ???? ,, &ndash; &mdash;
+            &ldquo;Smartypants, double quotes&rdquo; and &lsquo;single quotes&rsquo;
+            Emphasis This is bold text
+            This is …
+
             <br>
             <a class="button is-marginless is-paddingless" href="https://blog.dilfish.dev/posts/use-markdown/">
-            <span class="icon-link is-small" style="line-height: 100%">
+              <span class="icon-link is-small" style="line-height: 100%">
                 <i class="fa fa-angle-double-right" aria-hidden="true"></i>
               </span>
               <p style="padding:0 5px"></p>more</p>
             </a>
-            
+
           </div>
-      </article>
-      
-      
-      
-    </main>
+    </article>
+
+
+
+  </main>
   <section class="section">
-  <div class="container">
-    <nav class="level is-mobile">
-      <div class="level-left">
-        <div class="level-item">
-          
-          <a class="button is-rounded" href="/">
-            <span class="icon is-small is-marginless">
-              <i class="fa fa-angle-left"></i>
-            </span>
-            Newer
-          </a>
-          
+    <div class="container">
+      <nav class="level is-mobile">
+        <div class="level-left">
+          <div class="level-item">
+
+            <a class="button is-rounded" href="/">
+              <span class="icon is-small is-marginless">
+                <i class="fa fa-angle-left"></i>
+              </span>
+              Newer
+            </a>
+
+          </div>
         </div>
-      </div>
-      <div class="level-right is-marginless">
-        <div class="level-item">
-          
-          <a class="button is-rounded" disabled>
-            Older
-            <span class="icon is-small is-marginless">
-              <i class="fa fa-angle-right"></i>
-            </span>
-          </a>
-          
+        <div class="level-right is-marginless">
+          <div class="level-item">
+
+            <a class="button is-rounded" disabled>
+              Older
+              <span class="icon is-small is-marginless">
+                <i class="fa fa-angle-right"></i>
+              </span>
+            </a>
+
+          </div>
         </div>
-      </div>
-    </nav>
-  </div>
-</section>
+      </nav>
+    </div>
+  </section>
 
   <section class="section">
-  <div class="container has-text-centered">
-    <p>&copy; dilfish</p>
-  </div>
-</section>
+    <div class="container has-text-centered">
+      <p>&copy; dilfish</p>
+    </div>
+  </section>
 
 
 </div>

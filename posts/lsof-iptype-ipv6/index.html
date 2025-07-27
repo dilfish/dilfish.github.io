@@ -1,41 +1,46 @@
 <!DOCTYPE html>
 <html lang="en-us">
+
 <head>
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
-     crossorigin="anonymous"></script>
-    </head>
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
+    crossorigin="anonymous"></script>
+</head>
 <title>lsof 显示 IP 类型为 IPv6 | Dilfish&#39;s Blog</title>
 <meta charset="utf-8">
 <meta name="generator" content="Hugo 0.147.8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="https://blog.871116.xyz/css/index.css">
-<link rel="stylesheet" href="https://blog.871116.xyz/css/classes.css">
-<link rel="canonical" href="https://blog.871116.xyz/posts/lsof-iptype-ipv6/">
+<link rel="stylesheet" href="https://dilfish.github.io/css/index.css">
+<link rel="stylesheet" href="https://dilfish.github.io/css/classes.css">
+<link rel="canonical" href="https://dilfish.github.io/posts/lsof-iptype-ipv6/">
 <link rel="alternate" type="application/rss+xml" href="" title="Dilfish&#39;s Blog">
 
 <body>
 
-<header class="icons">
-  
-    <a href="https://blog.871116.xyz/">Dilfish&#39;s Blog</a>
-  
-    <a href="https://871116.xyz">Homepage</a>
-  
-  
-</header>
+  <header class="icons">
 
-<article>
-  <header>
-    <h1>lsof 显示 IP 类型为 IPv6</h1>
-    <time datetime="2024-05-22T20:58:18&#43;08:00">May 22, 2024</time>
+    <a href="https://dilfish.github.io/">Dilfish&#39;s Blog</a>
+
+    <a href="https://871116.xyz">Homepage</a>
+
+
   </header>
-  <p>几天前看到一个问题说，为什么 lsof 显示的 IP 类型是 IPv6 的，例如：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>root@gcp:~ <span style="color:#75715e"># lsof -i:9999</span>
+
+  <article>
+    <header>
+      <h1>lsof 显示 IP 类型为 IPv6</h1>
+      <time datetime="2024-05-22T20:58:18&#43;08:00">May 22, 2024</time>
+    </header>
+    <p>几天前看到一个问题说，为什么 lsof 显示的 IP 类型是 IPv6 的，例如：</p>
+    <div class="highlight">
+      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>root@gcp:~ <span style="color:#75715e"># lsof -i:9999</span>
 </span></span><span style="display:flex;"><span>COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
 </span></span><span style="display:flex;"><span>a.out   <span style="color:#ae81ff">81466</span> root    3u  IPv6 <span style="color:#ae81ff">805392</span>      0t0  TCP *:9999 <span style="color:#f92672">(</span>LISTEN<span style="color:#f92672">)</span>
-</span></span></code></pre></div><p>但是这个接口却可以被 IPv4 客户端连接。</p>
-<p>go 语言里面有一个相关的函数叫 net.ListenTCP，里面有个函数选择协议：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-golang" data-lang="golang"><span style="display:flex;"><span><span style="color:#75715e">// favoriteAddrFamily returns the appropriate address family for the</span>
+</span></span></code></pre>
+    </div>
+    <p>但是这个接口却可以被 IPv4 客户端连接。</p>
+    <p>go 语言里面有一个相关的函数叫 net.ListenTCP，里面有个函数选择协议：</p>
+    <div class="highlight">
+      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-golang" data-lang="golang"><span style="display:flex;"><span><span style="color:#75715e">// favoriteAddrFamily returns the appropriate address family for the</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e">// given network, laddr, raddr and mode.</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e">//</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e">// If mode indicates &#34;listen&#34; and laddr is a wildcard, we assume that</span>
@@ -77,8 +82,11 @@
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">func</span> <span style="color:#a6e22e">favoriteAddrFamily</span>(<span style="color:#a6e22e">network</span> <span style="color:#66d9ef">string</span>, 
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">laddr</span>, <span style="color:#a6e22e">raddr</span> <span style="color:#a6e22e">sockaddr</span>, 
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">mode</span> <span style="color:#66d9ef">string</span>) (<span style="color:#a6e22e">family</span> <span style="color:#66d9ef">int</span>, <span style="color:#a6e22e">ipv6only</span> <span style="color:#66d9ef">bool</span>) {
-</span></span></code></pre></div><p>我写了一个 c 语言程序验证：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-c" data-lang="c"><span style="display:flex;"><span><span style="color:#75715e">#include</span> <span style="color:#75715e">&lt;stdlib.h&gt;</span><span style="color:#75715e">
+</span></span></code></pre>
+    </div>
+    <p>我写了一个 c 语言程序验证：</p>
+    <div class="highlight">
+      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-c" data-lang="c"><span style="display:flex;"><span><span style="color:#75715e">#include</span> <span style="color:#75715e">&lt;stdlib.h&gt;</span><span style="color:#75715e">
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e">#include</span> <span style="color:#75715e">&lt;string.h&gt;</span><span style="color:#75715e">
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e">#include</span> <span style="color:#75715e">&lt;unistd.h&gt;</span><span style="color:#75715e">
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e">#include</span> <span style="color:#75715e">&lt;sys/types.h&gt;</span><span style="color:#75715e">
@@ -148,13 +156,15 @@
 </span></span><span style="display:flex;"><span>        }
 </span></span><span style="display:flex;"><span>    }
 </span></span><span style="display:flex;"><span>}
-</span></span></code></pre></div><p>因此这是一个 linux kernel 支持的功能，细节上我还没研究。</p>
+</span></span></code></pre>
+    </div>
+    <p>因此这是一个 linux kernel 支持的功能，细节上我还没研究。</p>
 
-</article>
+  </article>
 
 
 
-<div align="center">Copy right of dilfish, and all rights reserved!</div>
+  <div align="center">Copy right of dilfish, and all rights reserved!</div>
 </body>
 
 </html>

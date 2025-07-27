@@ -1,56 +1,64 @@
 <!DOCTYPE html>
 <html lang="en-us">
+
 <head>
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
-     crossorigin="anonymous"></script>
-    </head>
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
+    crossorigin="anonymous"></script>
+</head>
 <title>web 开发中的 responsiveness | Dilfish&#39;s Blog</title>
 <meta charset="utf-8">
 <meta name="generator" content="Hugo 0.147.8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="https://blog.871116.xyz/css/index.css">
-<link rel="stylesheet" href="https://blog.871116.xyz/css/classes.css">
-<link rel="canonical" href="https://blog.871116.xyz/posts/responsiveness-in-web-development/">
+<link rel="stylesheet" href="https://dilfish.github.io/css/index.css">
+<link rel="stylesheet" href="https://dilfish.github.io/css/classes.css">
+<link rel="canonical" href="https://dilfish.github.io/posts/responsiveness-in-web-development/">
 <link rel="alternate" type="application/rss+xml" href="" title="Dilfish&#39;s Blog">
 
 <body>
 
-<header class="icons">
-  
-    <a href="https://blog.871116.xyz/">Dilfish&#39;s Blog</a>
-  
-    <a href="https://871116.xyz">Homepage</a>
-  
-  
-</header>
+  <header class="icons">
 
-<article>
-  <header>
-    <h1>web 开发中的 responsiveness</h1>
-    <time datetime="2021-11-17T11:25:27&#43;08:00">November 17, 2021</time>
+    <a href="https://dilfish.github.io/">Dilfish&#39;s Blog</a>
+
+    <a href="https://871116.xyz">Homepage</a>
+
+
   </header>
-  <h2 id="概念">概念</h2>
-<p>responsiveness 意思是可响应性，其含义是在不同尺寸设备上面显示不同的样子。原理是 css 有一个特性叫 media query，可以查询当前显示环境的宽度。</p>
-<p>另外一个技术叫做 flaxbox，可以让一个 column 元素，在窄的设备上面堆起来，而在宽的设备上面横排。</p>
-<h2 id="文档">文档</h2>
-<p>可以参考 bootstrap 和 bulma 的文档：
-<a href="https://getbootstrap.com/docs/5.0/layout/breakpoints/">https://getbootstrap.com/docs/5.0/layout/breakpoints/</a>
-<a href="https://bulma.io/documentation/columns/basics/">https://bulma.io/documentation/columns/basics/</a></p>
-<p>另外我看了一个示意比较清晰的文章是：
-<a href="https://www.freecodecamp.org/news/learn-the-bootstrap-4-grid-system-in-10-minutes-e83bfae115da/">https://www.freecodecamp.org/news/learn-the-bootstrap-4-grid-system-in-10-minutes-e83bfae115da/</a></p>
-<h2 id="问题">问题</h2>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-html" data-lang="html"><span style="display:flex;"><span>  <span style="color:#75715e">&lt;!-- Stack the columns on mobile by making one full-width and the other half-width --&gt;</span>
+
+  <article>
+    <header>
+      <h1>web 开发中的 responsiveness</h1>
+      <time datetime="2021-11-17T11:25:27&#43;08:00">November 17, 2021</time>
+    </header>
+    <h2 id="概念">概念</h2>
+    <p>responsiveness 意思是可响应性，其含义是在不同尺寸设备上面显示不同的样子。原理是 css 有一个特性叫 media query，可以查询当前显示环境的宽度。</p>
+    <p>另外一个技术叫做 flaxbox，可以让一个 column 元素，在窄的设备上面堆起来，而在宽的设备上面横排。</p>
+    <h2 id="文档">文档</h2>
+    <p>可以参考 bootstrap 和 bulma 的文档：
+      <a
+        href="https://getbootstrap.com/docs/5.0/layout/breakpoints/">https://getbootstrap.com/docs/5.0/layout/breakpoints/</a>
+      <a href="https://bulma.io/documentation/columns/basics/">https://bulma.io/documentation/columns/basics/</a>
+    </p>
+    <p>另外我看了一个示意比较清晰的文章是：
+      <a
+        href="https://www.freecodecamp.org/news/learn-the-bootstrap-4-grid-system-in-10-minutes-e83bfae115da/">https://www.freecodecamp.org/news/learn-the-bootstrap-4-grid-system-in-10-minutes-e83bfae115da/</a>
+    </p>
+    <h2 id="问题">问题</h2>
+    <div class="highlight">
+      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-html" data-lang="html"><span style="display:flex;"><span>  <span style="color:#75715e">&lt;!-- Stack the columns on mobile by making one full-width and the other half-width --&gt;</span>
 </span></span><span style="display:flex;"><span>  &lt;<span style="color:#f92672">div</span> <span style="color:#a6e22e">class</span><span style="color:#f92672">=</span><span style="color:#e6db74">&#34;row&#34;</span>&gt;
 </span></span><span style="display:flex;"><span>    &lt;<span style="color:#f92672">div</span> <span style="color:#a6e22e">class</span><span style="color:#f92672">=</span><span style="color:#e6db74">&#34;col-md-8&#34;</span>&gt;.col-md-8&lt;/<span style="color:#f92672">div</span>&gt;
 </span></span><span style="display:flex;"><span>    &lt;<span style="color:#f92672">div</span> <span style="color:#a6e22e">class</span><span style="color:#f92672">=</span><span style="color:#e6db74">&#34;col-6 col-md-4&#34;</span>&gt;.col-6 .col-md-4&lt;/<span style="color:#f92672">div</span>&gt;
 </span></span><span style="display:flex;"><span>  &lt;/<span style="color:#f92672">div</span>&gt;
-</span></span></code></pre></div><p>感觉理解起来有点乱，在设备宽度大于 md 的时候，显示为 8 和 4，但是小于 md 的时候怎么显示不够明确。只能多试试猜测他这个默认的含义。</p>
+</span></span></code></pre>
+    </div>
+    <p>感觉理解起来有点乱，在设备宽度大于 md 的时候，显示为 8 和 4，但是小于 md 的时候怎么显示不够明确。只能多试试猜测他这个默认的含义。</p>
 
-</article>
+  </article>
 
 
 
-<div align="center">Copy right of dilfish, and all rights reserved!</div>
+  <div align="center">Copy right of dilfish, and all rights reserved!</div>
 </body>
 
 </html>
