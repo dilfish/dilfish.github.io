@@ -67,7 +67,7 @@
 <p>可选支持是 stream 状态变化，例如打开，关闭，等等。</p>
 <h3 id="状态机">状态机</h3>
 <p>发送和接受状态可以由状态机实现。
-<img src="https://blog.871116.xyz/pics/send.state.machine.png" alt="send state machine">
+<img src="/pics/send.state.machine.png" alt="send state machine">
 新打开的 stream 处于 Ready 状态，此时 quic 可能会缓存住应用的数据。发送 STREAM 或者 STREAM_DATA_BLOCKED frame 之后，stream 进入 Send 状态。被动打开的 stream 收到对端打开 stream 的包之后，进入 Ready 状态。</p>
 <p>拥塞控制由接收方控制，最多可以接收 MAX_STREAM_DATA 个 frame。如果发送的数据被拥塞控制算法阻止，则产生一个 STREAM_DATA_BLOCKED stream。</p>
 <p>发送完数据之后，发送端会发送一个 STREAM frame 设置 FIN 标记，此时进入 Data Sent 状态，之后就只会重传丢失的数据，因此此时可以忽略拥塞算法（因为重传的请求都是对方发起的）。因为已经发出了 FIN 标记，所以此时还可能接收到 MAX_STREAM_DATA 个 frame。对端发送的 MAX_STREAM_DATA frame 可以安全地忽略。</p>

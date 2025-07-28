@@ -46,7 +46,7 @@
 <p>phantomdata 解释最好的文章是这个：
 <a href="http://troubles.md/why-phantomdata/">why phantomdata</a>
 本文也解释了 subtyping 和 variance 的内容。
-<img src="https://blog.871116.xyz/pics/variance.png" alt="subtypoing">
+<img src="/pics/variance.png" alt="subtypoing">
 当然还有官方的文档：
 <a href="https://doc.rust-lang.org/nomicon/phantom-data.html">phantom data</a>
 <a href="https://doc.rust-lang.org/nomicon/subtyping.html">sub typing</a></p>
@@ -68,7 +68,7 @@
 </span></span><span style="display:flex;"><span>    <span style="color:#75715e">// _marker: marker::PhantomData&lt;T&gt;,
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>}
 </span></span></code></pre></div><p>因为 const raw pointer 不能修改内容，所以 drop checker 认为 Vec 不拥有数据，也可以通过 phantom data 来指示，销毁 Vec 的同时，销毁 T。</p>
-<p><img src="https://blog.871116.xyz/pics/phantomdata.png" alt="如图"></p>
+<p><img src="/pics/phantomdata.png" alt="如图"></p>
 <h3 id="infallable">infallable</h3>
 <p>Infallable 的用处比较简单，就是在 trait 或者参数需求的时候的一个占位符。</p>
 <h3 id="dyn">dyn</h3>
