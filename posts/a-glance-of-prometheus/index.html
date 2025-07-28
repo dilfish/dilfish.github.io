@@ -1,13 +1,10 @@
 <!DOCTYPE html>
 <html lang="en-us">
-
 <head>
-  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
-    crossorigin="anonymous"></script>
-</head>
+    </head>
 <title>Prometheus 初探 | Dilfish&#39;s Blog</title>
 <meta charset="utf-8">
-<meta name="generator" content="Hugo 0.147.8">
+<meta name="generator" content="Hugo 0.148.1">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="https://dilfish.github.io/css/index.css">
 <link rel="stylesheet" href="https://dilfish.github.io/css/classes.css">
@@ -16,45 +13,44 @@
 
 <body>
 
-  <header class="icons">
-
+<header class="icons">
+  
     <a href="https://dilfish.github.io/">Dilfish&#39;s Blog</a>
-
+  
     <a href="https://871116.xyz">Homepage</a>
+  
+  
+</header>
 
-
+<article>
+  <header>
+    <h1>Prometheus 初探</h1>
+    <time datetime="2023-07-19T19:39:19&#43;08:00">July 19, 2023</time>
   </header>
+  <h3 id="起因">起因</h3>
+<p>好像几年前随着 k8s 兴起，prometheus 就流行了，我最近才开始接触。粗略地过一遍。</p>
+<h3 id="概念">概念</h3>
+<ul>
+<li>target: 目标机器</li>
+<li>job: 监控任务，和上面的机器是不同维度的数据，加上时间，就变三维数据了</li>
+<li>metric: 在 job 下面的细分，具体的监控对象</li>
+<li>exporter: prometheus 是主动拉取(scrape)监控数据的，被拉取对象叫 exporter，输出数据，一般在 /metrics</li>
+<li>scrape_interval: 抓取间隔，所以数据结果是离散的点，太快了会不会把服务器打爆了啊..</li>
+</ul>
+<h3 id="metrics">metrics</h3>
+<ul>
+<li>count: 计数器，单调递增的，和时间一起，就是一个斜线，斜率变化则表示该指标增长速率有变化</li>
+<li>gauge: 单个指标数量，均匀的数量应该是一个直线</li>
+<li>histogram: 分区间统计</li>
+</ul>
+<p>如图：
+<img src="https://blog.871116.xyz/pics/prom.png" alt="我的 grafana"></p>
 
-  <article>
-    <header>
-      <h1>Prometheus 初探</h1>
-      <time datetime="2023-07-19T19:39:19&#43;08:00">July 19, 2023</time>
-    </header>
-    <h3 id="起因">起因</h3>
-    <p>好像几年前随着 k8s 兴起，prometheus 就流行了，我最近才开始接触。粗略地过一遍。</p>
-    <h3 id="概念">概念</h3>
-    <ul>
-      <li>target: 目标机器</li>
-      <li>job: 监控任务，和上面的机器是不同维度的数据，加上时间，就变三维数据了</li>
-      <li>metric: 在 job 下面的细分，具体的监控对象</li>
-      <li>exporter: prometheus 是主动拉取(scrape)监控数据的，被拉取对象叫 exporter，输出数据，一般在 /metrics</li>
-      <li>scrape_interval: 抓取间隔，所以数据结果是离散的点，太快了会不会把服务器打爆了啊..</li>
-    </ul>
-    <h3 id="metrics">metrics</h3>
-    <ul>
-      <li>count: 计数器，单调递增的，和时间一起，就是一个斜线，斜率变化则表示该指标增长速率有变化</li>
-      <li>gauge: 单个指标数量，均匀的数量应该是一个直线</li>
-      <li>histogram: 分区间统计</li>
-    </ul>
-    <p>如图：
-      <img src="https://dilfish.github.io/pics/prom.png" alt="我的 grafana">
-    </p>
-
-  </article>
+</article>
 
 
 
-  <div align="center">Copy right of dilfish, and all rights reserved!</div>
+<div align="center">Copy right of dilfish, and all rights reserved!</div>
 </body>
 
 </html>

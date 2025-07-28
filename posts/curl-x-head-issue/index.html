@@ -1,13 +1,10 @@
 <!DOCTYPE html>
 <html lang="en-us">
-
 <head>
-  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
-    crossorigin="anonymous"></script>
-</head>
+    </head>
 <title>curl -X HEAD 问题 | Dilfish&#39;s Blog</title>
 <meta charset="utf-8">
-<meta name="generator" content="Hugo 0.147.8">
+<meta name="generator" content="Hugo 0.148.1">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="https://dilfish.github.io/css/index.css">
 <link rel="stylesheet" href="https://dilfish.github.io/css/classes.css">
@@ -16,39 +13,37 @@
 
 <body>
 
-  <header class="icons">
-
+<header class="icons">
+  
     <a href="https://dilfish.github.io/">Dilfish&#39;s Blog</a>
-
+  
     <a href="https://871116.xyz">Homepage</a>
+  
+  
+</header>
 
-
+<article>
+  <header>
+    <h1>curl -X HEAD 问题</h1>
+    <time datetime="2021-04-16T18:15:12&#43;08:00">April 16, 2021</time>
   </header>
+  <h2 id="缘起">缘起</h2>
+<p>当你用 curl 测试服务的 HTTP 请求时，如果使用 -X HEAD 参数，curl 会警告说
+<code>Warning: Setting custom HTTP method to HEAD with -X/--request may not work the</code>
+<code>Warning: way you want. Consider using -I/--head instead.</code>
+意思想要真正使用 HEAD 请求，应该使用 -I 或者 &ndash;head，而使用 -X HEAD 将可能不按你预期的方式工作。</p>
+<h2 id="测试结果">测试结果</h2>
+<p>使用 -X HEAD 参数的结果是，返回了请求的 headers，并且 Content-Length 和普通的 GET 请求一样。但是请求没有完成，连接没有断开。</p>
+<p>如果此时加上 -H &lsquo;Connection: close&rsquo; 参数，则服务器会断开连接，而 curl 报错是
+<code>curl: (18) transfer closed with x bytes remaining to read</code></p>
+<p>说明正常情况下服务器遇到 HEAD 请求会停止发送数据，同时客户端断开连接。而 curl -X HEAD 只修改了请求参数，并没有处理 HEAD 方式的语义，导致连接没有断开。</p>
+<p>用 nc 测试的话，连接不断可以继续发送请求，go 的 HTTP 服务端默认 Connection: keep-alive</p>
 
-  <article>
-    <header>
-      <h1>curl -X HEAD 问题</h1>
-      <time datetime="2021-04-16T18:15:12&#43;08:00">April 16, 2021</time>
-    </header>
-    <h2 id="缘起">缘起</h2>
-    <p>当你用 curl 测试服务的 HTTP 请求时，如果使用 -X HEAD 参数，curl 会警告说
-      <code>Warning: Setting custom HTTP method to HEAD with -X/--request may not work the</code>
-      <code>Warning: way you want. Consider using -I/--head instead.</code>
-      意思想要真正使用 HEAD 请求，应该使用 -I 或者 &ndash;head，而使用 -X HEAD 将可能不按你预期的方式工作。
-    </p>
-    <h2 id="测试结果">测试结果</h2>
-    <p>使用 -X HEAD 参数的结果是，返回了请求的 headers，并且 Content-Length 和普通的 GET 请求一样。但是请求没有完成，连接没有断开。</p>
-    <p>如果此时加上 -H &lsquo;Connection: close&rsquo; 参数，则服务器会断开连接，而 curl 报错是
-      <code>curl: (18) transfer closed with x bytes remaining to read</code>
-    </p>
-    <p>说明正常情况下服务器遇到 HEAD 请求会停止发送数据，同时客户端断开连接。而 curl -X HEAD 只修改了请求参数，并没有处理 HEAD 方式的语义，导致连接没有断开。</p>
-    <p>用 nc 测试的话，连接不断可以继续发送请求，go 的 HTTP 服务端默认 Connection: keep-alive</p>
-
-  </article>
+</article>
 
 
 
-  <div align="center">Copy right of dilfish, and all rights reserved!</div>
+<div align="center">Copy right of dilfish, and all rights reserved!</div>
 </body>
 
 </html>

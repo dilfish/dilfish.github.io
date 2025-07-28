@@ -1,13 +1,10 @@
 <!DOCTYPE html>
 <html lang="en-us">
-
 <head>
-  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
-    crossorigin="anonymous"></script>
-</head>
+    </head>
 <title>golang 在 HTTP 中使用 scope link 的 IPv6 地址 | Dilfish&#39;s Blog</title>
 <meta charset="utf-8">
-<meta name="generator" content="Hugo 0.147.8">
+<meta name="generator" content="Hugo 0.148.1">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="https://dilfish.github.io/css/index.css">
 <link rel="stylesheet" href="https://dilfish.github.io/css/classes.css">
@@ -16,34 +13,27 @@
 
 <body>
 
-  <header class="icons">
-
+<header class="icons">
+  
     <a href="https://dilfish.github.io/">Dilfish&#39;s Blog</a>
-
+  
     <a href="https://871116.xyz">Homepage</a>
+  
+  
+</header>
 
-
+<article>
+  <header>
+    <h1>golang 在 HTTP 中使用 scope link 的 IPv6 地址</h1>
+    <time datetime="2020-10-15T12:18:42&#43;08:00">October 15, 2020</time>
   </header>
-
-  <article>
-    <header>
-      <h1>golang 在 HTTP 中使用 scope link 的 IPv6 地址</h1>
-      <time datetime="2020-10-15T12:18:42&#43;08:00">October 15, 2020</time>
-    </header>
-    <p>例如 server 端接口名称为 bond0</p>
-    <p>server 端命令：</p>
-    <div class="highlight">
-      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-sh" data-lang="sh"><span style="display:flex;"><span>./http -s<span style="color:#f92672">=</span>true -i<span style="color:#f92672">=</span>:: -p<span style="color:#f92672">=</span><span style="color:#ae81ff">19999</span>
-</span></span></code></pre>
-    </div>
-    <p>client 端命令：</p>
-    <div class="highlight">
-      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-sh" data-lang="sh"><span style="display:flex;"><span>./http -i<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;fe80::468a:5bff:fe3d:c6d2%25bond0&#34;</span> -p<span style="color:#f92672">=</span><span style="color:#ae81ff">19999</span>
-</span></span></code></pre>
-    </div>
-    <p>其中 %25 是 &lsquo;%&rsquo; 的 HTTP 转码，代码如下：</p>
-    <div class="highlight">
-      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-golang" data-lang="golang"><span style="display:flex;"><span><span style="color:#f92672">package</span> <span style="color:#a6e22e">main</span>
+  <p>例如 server 端接口名称为 bond0</p>
+<p>server 端命令：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-sh" data-lang="sh"><span style="display:flex;"><span>./http -s<span style="color:#f92672">=</span>true -i<span style="color:#f92672">=</span>:: -p<span style="color:#f92672">=</span><span style="color:#ae81ff">19999</span>
+</span></span></code></pre></div><p>client 端命令：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-sh" data-lang="sh"><span style="display:flex;"><span>./http -i<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;fe80::468a:5bff:fe3d:c6d2%25bond0&#34;</span> -p<span style="color:#f92672">=</span><span style="color:#ae81ff">19999</span>
+</span></span></code></pre></div><p>其中 %25 是 &lsquo;%&rsquo; 的 HTTP 转码，代码如下：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-golang" data-lang="golang"><span style="display:flex;"><span><span style="color:#f92672">package</span> <span style="color:#a6e22e">main</span>
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> (
 </span></span><span style="display:flex;"><span>	<span style="color:#e6db74">&#34;flag&#34;</span>
@@ -93,13 +83,12 @@
 </span></span><span style="display:flex;"><span>	<span style="color:#a6e22e">RunClient</span>(<span style="color:#f92672">*</span><span style="color:#a6e22e">FlagIP</span>, <span style="color:#f92672">*</span><span style="color:#a6e22e">FlagPort</span>)
 </span></span><span style="display:flex;"><span>	<span style="color:#66d9ef">return</span>
 </span></span><span style="display:flex;"><span>}
-</span></span></code></pre>
-    </div>
-  </article>
+</span></span></code></pre></div>
+</article>
 
 
 
-  <div align="center">Copy right of dilfish, and all rights reserved!</div>
+<div align="center">Copy right of dilfish, and all rights reserved!</div>
 </body>
 
 </html>

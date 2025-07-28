@@ -1,13 +1,10 @@
 <!DOCTYPE html>
 <html lang="en-us">
-
 <head>
-  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7616199302297856"
-    crossorigin="anonymous"></script>
-</head>
+    </head>
 <title>Golang 自动处理 gzip | Dilfish&#39;s Blog</title>
 <meta charset="utf-8">
-<meta name="generator" content="Hugo 0.147.8">
+<meta name="generator" content="Hugo 0.148.1">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="https://dilfish.github.io/css/index.css">
 <link rel="stylesheet" href="https://dilfish.github.io/css/classes.css">
@@ -16,24 +13,23 @@
 
 <body>
 
-  <header class="icons">
-
+<header class="icons">
+  
     <a href="https://dilfish.github.io/">Dilfish&#39;s Blog</a>
-
+  
     <a href="https://871116.xyz">Homepage</a>
+  
+  
+</header>
 
-
+<article>
+  <header>
+    <h1>Golang 自动处理 gzip</h1>
+    <time datetime="2024-08-05T21:06:37&#43;08:00">August 05, 2024</time>
   </header>
-
-  <article>
-    <header>
-      <h1>Golang 自动处理 gzip</h1>
-      <time datetime="2024-08-05T21:06:37&#43;08:00">August 05, 2024</time>
-    </header>
-    <h2 id="起因">起因</h2>
-    <p>我在写测试代码时发现，go 的客户端会自动加上 Accept-Encoding: gzip 的头，同时服务端又会自动取消 Content-Encoding:gzip 的头。</p>
-    <div class="highlight">
-      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-golang" data-lang="golang"><span style="display:flex;"><span><span style="color:#66d9ef">type</span> <span style="color:#a6e22e">MockHTTPServerManagerServer</span> <span style="color:#66d9ef">struct</span>{}
+  <h2 id="起因">起因</h2>
+<p>我在写测试代码时发现，go 的客户端会自动加上 Accept-Encoding: gzip 的头，同时服务端又会自动取消 Content-Encoding:gzip 的头。</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-golang" data-lang="golang"><span style="display:flex;"><span><span style="color:#66d9ef">type</span> <span style="color:#a6e22e">MockHTTPServerManagerServer</span> <span style="color:#66d9ef">struct</span>{}
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">func</span> (<span style="color:#a6e22e">m</span> <span style="color:#f92672">*</span><span style="color:#a6e22e">MockHTTPServerManagerServer</span>) <span style="color:#a6e22e">ServeHTTP</span>(<span style="color:#a6e22e">w</span> <span style="color:#a6e22e">http</span>.<span style="color:#a6e22e">ResponseWriter</span>, <span style="color:#a6e22e">r</span> <span style="color:#f92672">*</span><span style="color:#a6e22e">http</span>.<span style="color:#a6e22e">Request</span>) {
 </span></span><span style="display:flex;"><span>	<span style="color:#75715e">// 服务端自动去掉 Content-Encoding gzip 头，哪怕真的写 gzip 数据</span>
@@ -66,11 +62,8 @@
 </span></span><span style="display:flex;"><span>	<span style="color:#a6e22e">log</span>.<span style="color:#a6e22e">Println</span>(<span style="color:#e6db74">&#34;body is:&#34;</span>, string(<span style="color:#a6e22e">bt</span>))
 </span></span><span style="display:flex;"><span>	<span style="color:#a6e22e">log</span>.<span style="color:#a6e22e">Println</span>(<span style="color:#a6e22e">err</span>)
 </span></span><span style="display:flex;"><span>}
-</span></span></code></pre>
-    </div>
-    <p>上面这段代码会输出：</p>
-    <div class="highlight">
-      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>Running tool: /usr/local/go/bin/go test -timeout 30s -run ^TestGoHTTP$ github.com/dilfish/httpserver
+</span></span></code></pre></div><p>上面这段代码会输出：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>Running tool: /usr/local/go/bin/go test -timeout 30s -run ^TestGoHTTP$ github.com/dilfish/httpserver
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#f92672">===</span> RUN   TestGoHTTP
 </span></span><span style="display:flex;"><span>2024/08/05 20:46:32 /Users/dilfish/go/src/httpserver/m_test.go:32: url is: http://127.0.0.1:60939
@@ -82,43 +75,34 @@
 </span></span><span style="display:flex;"><span>--- PASS: TestGoHTTP <span style="color:#f92672">(</span>0.00s<span style="color:#f92672">)</span>
 </span></span><span style="display:flex;"><span>PASS
 </span></span><span style="display:flex;"><span>ok      github.com/dilfish/httpserver   0.705s
-</span></span></code></pre>
-    </div>
-    <h2 id="发送添加-gzip">发送添加 gzip</h2>
-    <p>客户端发送的 header 为空，go 自动加上了 User-Agent 我们先不管，他还自动加上了 Accept-Encoding。代码路径如下：</p>
-    <div class="highlight">
-      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-golang" data-lang="golang"><span style="display:flex;"><span><span style="color:#a6e22e">http</span>.<span style="color:#a6e22e">DefaultClient</span>.<span style="color:#a6e22e">Do</span>(<span style="color:#a6e22e">req</span>) <span style="color:#f92672">-</span>&gt;
+</span></span></code></pre></div><h2 id="发送添加-gzip">发送添加 gzip</h2>
+<p>客户端发送的 header 为空，go 自动加上了 User-Agent 我们先不管，他还自动加上了 Accept-Encoding。代码路径如下：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-golang" data-lang="golang"><span style="display:flex;"><span><span style="color:#a6e22e">http</span>.<span style="color:#a6e22e">DefaultClient</span>.<span style="color:#a6e22e">Do</span>(<span style="color:#a6e22e">req</span>) <span style="color:#f92672">-</span>&gt;
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">net</span><span style="color:#f92672">/</span><span style="color:#a6e22e">http</span>.<span style="color:#a6e22e">Client</span>.<span style="color:#a6e22e">do</span> <span style="color:#f92672">-</span>&gt;
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">net</span><span style="color:#f92672">/</span><span style="color:#a6e22e">http</span>.<span style="color:#a6e22e">Client</span>.<span style="color:#a6e22e">send</span> <span style="color:#f92672">-</span>&gt;
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">net</span><span style="color:#f92672">/</span><span style="color:#a6e22e">http</span>.<span style="color:#a6e22e">Client</span>.<span style="color:#a6e22e">transport</span>().<span style="color:#a6e22e">RoundTrip</span>()
-</span></span></code></pre>
-    </div>
-    <p>这个 RoundTrip 实际是</p>
-    <div class="highlight">
-      <pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-golang" data-lang="golang"><span style="display:flex;"><span><span style="color:#a6e22e">net</span><span style="color:#f92672">/</span><span style="color:#a6e22e">http</span>.<span style="color:#a6e22e">Transport</span>.<span style="color:#a6e22e">RoundTrip</span>() <span style="color:#f92672">-</span>&gt;
+</span></span></code></pre></div><p>这个 RoundTrip 实际是</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-golang" data-lang="golang"><span style="display:flex;"><span><span style="color:#a6e22e">net</span><span style="color:#f92672">/</span><span style="color:#a6e22e">http</span>.<span style="color:#a6e22e">Transport</span>.<span style="color:#a6e22e">RoundTrip</span>() <span style="color:#f92672">-</span>&gt;
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">net</span><span style="color:#f92672">/</span><span style="color:#a6e22e">http</span>.<span style="color:#a6e22e">persistConn</span>.<span style="color:#a6e22e">roundTrip</span>
-</span></span></code></pre>
-    </div>
-    <p>然后就加上了：</p>
-    <p><img src="https://dilfish.github.io/pics/golang.http.client.add.gzip.png" alt="golang http client"></p>
-    <h2 id="返回-content-encoding-消失">返回 Content-Encoding 消失</h2>
-    <p>返回时 Content-Encoding 没有了，要么是服务端去掉了，要么是客户端自动解压然后去掉了。</p>
-    <p>net/http.Transport 在初始化时会调用 dialConn 函数，返回一个持久连接。
-      里面为每一个 persistConn 分配了一个 go routine 用 readLoop 函数做读操作。
-      在这里自动解压，并删除了 Content-Encoding 头:</p>
-    <p><img src="https://dilfish.github.io/pics/golang.client.del.gzip.png" alt="golang http client del gzip"></p>
-    <p>这里 addedGzip 的值，实际上上面的 requestedGzip，也就是说，自动加的 Accept-Encoding，这里会自动解压。</p>
-    <p>要不要自动加除了用户没设置，不是 Range，不是 HEAD 之外，还有一个控制条件：</p>
-    <p><img src="https://dilfish.github.io/pics/golang.disable.compress.png" alt="golang disable compress"></p>
-    <p>我们来试一下，完美：</p>
-    <p><img src="https://dilfish.github.io/pics/golang.disable.compress.code.png" alt="golang disable compress code">
-    </p>
+</span></span></code></pre></div><p>然后就加上了：</p>
+<p><img src="https://blog.871116.xyz/pics/golang.http.client.add.gzip.png" alt="golang http client"></p>
+<h2 id="返回-content-encoding-消失">返回 Content-Encoding 消失</h2>
+<p>返回时 Content-Encoding 没有了，要么是服务端去掉了，要么是客户端自动解压然后去掉了。</p>
+<p>net/http.Transport 在初始化时会调用 dialConn 函数，返回一个持久连接。
+里面为每一个 persistConn 分配了一个 go routine 用 readLoop 函数做读操作。
+在这里自动解压，并删除了 Content-Encoding 头:</p>
+<p><img src="https://blog.871116.xyz/pics/golang.client.del.gzip.png" alt="golang http client del gzip"></p>
+<p>这里 addedGzip 的值，实际上上面的 requestedGzip，也就是说，自动加的 Accept-Encoding，这里会自动解压。</p>
+<p>要不要自动加除了用户没设置，不是 Range，不是 HEAD 之外，还有一个控制条件：</p>
+<p><img src="https://blog.871116.xyz/pics/golang.disable.compress.png" alt="golang disable compress"></p>
+<p>我们来试一下，完美：</p>
+<p><img src="https://blog.871116.xyz/pics/golang.disable.compress.code.png" alt="golang disable compress code"></p>
 
-  </article>
+</article>
 
 
 
-  <div align="center">Copy right of dilfish, and all rights reserved!</div>
+<div align="center">Copy right of dilfish, and all rights reserved!</div>
 </body>
 
 </html>
