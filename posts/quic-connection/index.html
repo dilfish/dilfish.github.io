@@ -56,12 +56,12 @@
 <li>可以保护传输参数，服务端的参数必须加密</li>
 <li>应用层协议保护</li>
 </ul>
-<p><img src="https://blog.871116.xyz/pics/simple.quic.handshake.png" alt="simple quic handshake">
+<p><img src="/pics/simple.quic.handshake.png" alt="simple quic handshake">
 带*的地方是可以发送应用数据的地方。</p>
-<p><img src="https://blog.871116.xyz/pics/1rtt.quic.handshake.png" alt="1rtt quic handshake">
+<p><img src="/pics/1rtt.quic.handshake.png" alt="1rtt quic handshake">
 第一个包是 Initial 类型，packet 号是0，包含了一个 CRYPTO frame，内容是 ClientHello.
 多个不同类型的 packet 可以放在一个 UDP 包里面，所以这个握手需要最少4个 UDP 包。</p>
-<p><img src="https://blog.871116.xyz/pics/0rtt.quic.handshake.png" alt="0rtt quic handshake">
+<p><img src="/pics/0rtt.quic.handshake.png" alt="0rtt quic handshake">
 connection ID 是为了保护路由的一致性，long header 包含2个 connection ID，dest connection ID 是接收端选择的，src connection ID 是为了对端设置 dest conntion ID用的.</p>
 <p>握手过程中，每个端点都会选择 src connection ID，让对方可以发送给自己数据。在第一个 Initial packet 之后，每个端点再发送数据时都需要设置 dest connection ID。</p>
 <p>客户端第一次发送 Initial packet 时，可以选择一个至少8字节的 dest connection ID 临时使用，在收到服务端返回的真正的 dest connection ID 之前，它必须一直使用这个 ID. 同时设置自己的 src connection ID。0rtt 包需要使用的 src 和 dest connection ID 与客户端第一次建立连接时使用的一样。收到服务端的 Initial packet 之后，就确定了 dest connection ID。唯一可变的只有服务端的 NEW_CONNECTION_ID frame 了。</p>

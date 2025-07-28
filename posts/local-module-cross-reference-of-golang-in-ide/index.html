@@ -103,7 +103,7 @@ func P(str string) {
 }
 </code></pre><h3 id="问题">问题</h3>
 <p>此时用 IDE 打开 gomodcrossref 本身功能正常，但是打开 internal/github.com/dilfish/intb/main.go 就有问题了：
-<img src="https://blog.871116.xyz/pics/bad.ref.png" alt="如图所示">
+<img src="/pics/bad.ref.png" alt="如图所示">
 internal/github.com/dilfish/inta/main.go 的情况是类似的，当然打开 intc/main.go 文件没有问题。</p>
 <h3 id="原因">原因</h3>
 <p>原因很简单，就是 IDE 把 inta, intb 当成独立的模块，他的依赖要从对应的 go.mod 文件去找，默认不指定 replace 时，他直接从 github 网站找，那自然是找不到的，于是解析依赖失败。这个问题的诡异之处在于，项目依赖 inta, intb，所以他们必须是 module，而他们自己在 IDE 中要想走项目的总的 go.mod，又要求他们不能是 module，整个一个死循环。</p>
