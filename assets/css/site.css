@@ -60,7 +60,7 @@ body {
   padding-right: max(20px, env(safe-area-inset-right));
 }
 
-/* ---------- site head / foot ---------- */
+/* ---------- site head ---------- */
 
 .site-head h1 {
   margin: 0 0 0.3rem;
@@ -73,18 +73,6 @@ body {
   margin: 0;
   color: var(--muted);
   font-size: 0.94rem;
-}
-
-.site-foot {
-  margin-top: 3rem;
-  padding-top: 1.1rem;
-  border-top: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-
-.site-foot p {
-  margin: 0;
 }
 
 /* ---------- index list ---------- */

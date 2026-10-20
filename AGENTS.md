@@ -15,11 +15,10 @@
 ```text
 index.html          站点首页（系列入口）
 404.html            404 页
-pages/              零散文档
 gpu/                《GPU 编程基础》系列（index.html + 章节 + series.js）
 math/               《inferserver 的数学基础》系列（index.html + 章节 + series.js）
 assets/
-  css/site.css      站点首页 / 404 / pages 的样式
+  css/site.css      站点首页 / 404 的样式
   css/math.css      两个系列的共享样式
   css/gpu.css       GPU 系列在 math.css 之上的补充样式
   js/nav.js         系列页共享脚本：面包屑、上下章、KaTeX 渲染
@@ -35,14 +34,18 @@ assets/
 
 | 项 | 值 |
 |---|---|
-| 手机型号 | vivo X300 Pro（2025 年 10 月发布，天玑 9500） |
-| 屏幕 | 6.78 英寸 LTPO AMOLED，20:9，1–120 Hz 自适应刷新 |
+| 手机型号 | vivo X300 Pro（2025 年 10 月 13 日发布，10 月 17 日开售；联发科天玑 9500） |
+| 屏幕 | 6.78 英寸 BOE Q10 plus 8T LTPO AMOLED 直屏，20:9，1–120 Hz 自适应刷新，局部峰值 4500 nit |
 | 物理分辨率 | 2800 × 1260（竖屏 1260 × 2800） |
-| 像素密度 | 452 PPI（√(2800² + 1260²) / 6.78 ≈ 452.9） |
+| 像素密度 | 452 PPI（官方值；√(2800² + 1260²) / 6.78 ≈ 452.9） |
 | 竖屏物理宽度 | 1260 px（长边 2800 为高度） |
-| 推断 DPR | 3.0（Android 480 dpi 密度桶） |
-| 推断 CSS 视口 | 约 **420 × 933** px |
+| 推断 DPR | 3.0（Android 480 dpi 密度桶；若系统按 440 dpi 桶则为 2.75） |
+| 推断 CSS 视口 | 约 **420 × 933** px（DPR 3.0 时；DPR 2.75 时约 458 × 1018） |
 | 设计基准 | 420 CSS px 宽，单列 |
+
+以上参数已按 vivo 官方参数页（<https://www.vivo.com.cn/vivo/param/x300pro>）与
+GSMArena 规格页核对。DPR 与 CSS 视口取决于系统「显示大小」设置，属于推断值；
+`assets/css/site.css` 里的 420 px 基准对应 DPR 3.0。
 
 排版约束：
 
