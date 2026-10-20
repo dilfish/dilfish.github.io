@@ -60,6 +60,21 @@ __global__ void blockSum(const float* x, float* out, int n) {
 <p>上一版代码里 <code>atomicAdd</code> 的浮点结果每次都可能差几个 ULP，因为 block 的完成顺序由调度决定。这和 CPU 上多线程累加的问题一模一样；需要复现实验时，用固定的两阶段版本，或改用 double/Kahan 累加。</p>
 </div>
 
+<p><b>固定归约树：四步。</b>把上面说的“两阶段”写成可以照着抄的样子：</p>
+<ol class="steps">
+<li><b>kernel 1 写部分和，不用原子。</b>每个 block 把结果写到 <code>partial[blockIdx.x]</code>；block 数变了，<code>partial</code> 的长度跟着变，但每个元素怎么算不变。</li>
+<li><b>kernel 2 用单 block 归约 <code>partial</code>。</b>块数一般几千，一个 block 足够；shuffle 树和本节开头那段一样。</li>
+<li><b>把树的上界写死。</b><code>for (off = 16; off &gt; 0; off &gt;&gt;= 1)</code> 的起点由 warp 宽度决定，不能随 <code>blockDim</code> 或数据量变。否则同一份数据在 8 核和 80 核上会得到不同结果——这就是“换了个机器，数值就不一样”的来源。</li>
+<li><b>补齐，而不是跳过。</b>变长输入（<code>partial</code> 不满一轮）在尾部填 0（求和）或 <code>-INFINITY</code>（求 max），让每个位置都参与同一棵树。跳过空槽会让树形随数据长度改变。</li>
+</ol>
+<ul>
+<li><b><code>atomicAdd</code> 汇总：</b>不可复现（顺序由调度决定）；不占额外显存；块数任意。</li>
+<li><b>两阶段固定树：</b>可复现，但前提是块数与树形固定；多花“块数 × 4 B”；需要第二次 launch。</li>
+<li><b>单 block 归约：</b>可复现；零额外显存；但一个 block 最多 1024 线程，扩不动。</li>
+</ul>
+<p>注意第二条那个前提，它比“别用原子”更重要：<b>可复现的意思是“结果只由数据决定”，不是“两次碰巧一样”。</b>如果你的 block 数取决于 batch 大小或序列长度，那么换个 batch 组合，树的形状就变了，数值照样会漂——这正是生产框架要专门开一个“batch 不变”模式的原因。</p>
+<p><b>生产里怎么做。</b>某开源推理框架为此提供三组开关：kernel 库的确定性算法模式、注意力内核的 batch-invariant 模式，以及关掉集合通信里的多重归约。代价是吞吐下降，README 里直接写着 slower。验收方式也值得抄：64 条序列批量跑一遍，再逐条单独跑，比较 <code>(token, logprob, top-k ids, top-k logprobs)</code> 四元组——只比 token 是看不出问题的，argmax 对 1e-7 的漂移不敏感。出处：DeepSeek DeepInfer <code>main@774ce24</code>，Apache-2.0（<code>worker/runtime_config.py</code>、<code>attention_backend.py</code>）。</p>
+
 <h2>4.2 扫描：每个位置都要前缀和</h2>
 <p>给定 \(x_0,\dots,x_{n-1}\)，扫描要输出</p>
 \[
