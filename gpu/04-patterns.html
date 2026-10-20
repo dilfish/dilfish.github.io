@@ -144,13 +144,72 @@ T_p \;\ge\; \max\left(\frac{W}{p},\; S\right).
 <tr><td>直方图</td><td>\(n\) / \(n\)</td><td>\(n\) / \(1\)（带原子）</td><td>—</td></tr>
 </tbody></table></div>
 
-<h2>4.6 容易写错的地方</h2>
+<h2>4.6 两阶段剪枝：不排序也能 top-k</h2>
+<p>每生成一个 token，都要在词表上做一次 top-k + top-p + 采样。以 \(V = 129{,}280\) 为例：一行的 logits 是 253 KB（bf16），512 行就是 126 MB。而你真正需要的只是前 8 个 token 和一条阈值线。</p>
+<p><b>先排除两个错误答案。</b></p>
+<ul>
+<li><b>整行排序。</b>按 4.5 的表，排序的 work 是 \(O(V\log V)\)、span 是 \(O(\log^2 V)\)，还要把整行写回。只要前 8 个，却让 13 万个元素都参加了比赛。</li>
+<li><b>每线程一个 bin 的直方图。</b>词表的概率质量集中在少数 token 上，热点 bin 的原子冲突会把收益吃掉（4.4）。</li>
+</ul>
+<p><b>两阶段。</b>先粗筛，再精算：</p>
+<pre class="fig">129280 个 logits
+   │  粗筛：每 16 个取最大值
+   ▼
+8080 个块分数（16 KB）
+   │  选 top-8 块
+   ▼
+128 个候选 token
+   │  精确 top-k / CDF / 采样
+   ▼
+8 个 token + 一条阈值线</pre>
+<p>第一步把数组缩小到 1/16，第二步只留下 128 个候选：<b>剪枝率约 1000 倍</b>（\(129{,}280 / 128\)）。第三步是原本就有的采样逻辑，只是现在只跑在候选上。</p>
+<p class="file">topk.cu</p>
+<pre><code>constexpr int B = 16;   // 每块 16 个 token
+
+// 阶段 1：每块取最大值；末块给 +inf
+// lg = 一行 logits，sc = 块分数
+__global__ void block_max(const float* lg,
+                          float* sc, int V) {
+    int tid = threadIdx.x;
+    int b = blockIdx.x*blockDim.x + tid;
+    int lo = b*B, hi = min(lo + B, V);
+    if (lo &gt;= V) return;
+
+    float m = -INFINITY;
+    for (int i = lo; i &lt; hi; ++i)
+        m = fmaxf(m, lg[i]);
+    // 末块给 +inf，保证入选
+    sc[b] = (hi == V) ? INFINITY : m;
+}
+
+// 阶段 2：选 top-k 个块号（专用 topk kernel），
+//     只对这 k*B 个 token 做精确 top-k / CDF
+void refine(const float* lg, const int* cand,
+            int k, float* p, int* id);</code></pre>
+<p>三个只有落到生产里才会踩到的细节：</p>
+<ol class="steps">
+<li><b>块大小取 8 或 16。</b>块越小，候选越准、块内精算越省；但块分数越多，索引本身的字节数线性上升。\(B = 16\) 时索引是 16 KB/行，正好是 logits 的 \(1/16\)；\(B\) 再小，省下的精算可能抵不过索引的写入。</li>
+<li><b>最后一个有效块给 \(+\infty\)。</b>长度可变时末块只有一半的有效元素，它几乎拿不到最高分。给末块一个哨兵值保证它入选 —— 否则“正确的 token 不在候选里”，采样会静默出错，而不是报错。</li>
+<li><b>行按 1024 B 对齐。</b>下游的选择 kernel 要求行对齐，否则向量化读退化成按元素读。上游多写几列 padding，比让下游慢一个数量级划算。</li>
+</ol>
+<p><b>省的是什么。</b>logits 本来就要读一遍，<b>字节数省不掉</b>，所以这不是访存优化。省的是排序与重复扫描：全排序 \(W = O(V\log V)\)；两阶段 \(W \approx V + K + kB\)，其中 \(K\) 是块数、\(k\) 是保留的块数。后者的 span 也只有 \(\log(V/B) + \log K + \log(kB)\)，每一层都是一个块内的归约（4.1），而不是一条 \(V\) 长的串行链。</p>
+<div class="key"><span class="tag">判断方法</span>
+<p>粗筛 + 精算本质是<b>分支限界</b>：块最大值就是那个“界”。要判断一个 top-k 值不值得这么写，问三句：<b>① 要的元素远少于总数吗？</b>（\(k/n\) 决定剪枝率）<b>② 有没有一个便宜算得出来的界？</b>（没有界就只能全排序）<b>③ 下游能不能只处理候选？</b>三问都是“是”，粗筛才不白算。</p>
+</div>
+<p><b>练习。</b>设 \(V = 129{,}280\)、\(B = 16\)：算出块分数占 logits 的百分比、\(k = 8\) 时精算要扫多少个 token；再把 \(B\) 改成 64，索引字节和精算量各自往哪个方向变？</p>
+<div class="note">
+<p><b>数字出处。</b>词表 129280、块大小 8/16、末块 \(+\infty\)、行按 1024 B 对齐，取自 DeepSeek 开源的 DeepInfer（<code>main@774ce24</code>，Apache-2.0）：<code>candidate_block_max</code>（<code>candidate_blocks.py</code>）与 <code>_TOPK_ROW_ALIGNMENT_BYTES</code>。</p>
+</div>
+
+<h2>4.7 容易写错的地方</h2>
 <div class="warn"><span class="tag">常见错误</span>
 <ul>
 <li><b>shuffle 的 mask 写死全 1。</b>最后一个 warp 只有部分 lane 活跃时，结果是未定义；按 <code>__ballot_sync</code> 或实际 blockDim 计算 mask。</li>
 <li><b>假设 <code>blockDim.x</code> 是 32 的倍数。</b>归约里 <code>nwarps = blockDim.x &gt;&gt; 5</code>、<code>partial[tid &gt;&gt; 5]</code> 都依赖这个假设。</li>
 <li><b>忘记处理尾块。</b>grid-stride 循环能兜住 \(n\) 不是 block 整数倍的情况，但 stencil 的 halo 和扫描的 <code>t &lt; n</code> 仍要单独判。</li>
 <li><b>归约的初值写错。</b>求和初值 0、求 max 初值 <code>-INFINITY</code>，不要把“线程没数据”当成 0 参与 max。</li>
+<li><b>把两阶段剪枝当访存优化。</b>logits 还是要读一遍，省的是排序与重复扫描；只盯字节数会以为它没用。</li>
+<li><b>末块不设哨兵。</b>变长时末块元素少、分数低，很容易被剪掉，正确 token 就在里面 —— 采样结果“莫名其妙”，但不会报错。</li>
 <li><b>用原子汇总浮点后要求逐位复现。</b>顺序不定，结果不定；要复现就固定树形结构。</li>
 <li><b>shared 大小按“每线程一个”估。</b>归约的第二级只需要 32 个 float；histogram 需要 256 个 bin × 副本数。</li>
 </ul>

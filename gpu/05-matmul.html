@@ -154,7 +154,7 @@ __global__ void wmma_gemm(const half* A, const half* B, float* C,
 <div class="warn"><span class="tag">常见错误</span>
 <ul>
 <li><b>tile 不整除时没有边界处理。</b>上面的 <code>sgemm32</code> 直接假设 \(M,N,K\) 是 32 的倍数；真实数据要加判断，或者把矩阵补齐。</li>
-<li><b>shared 的第二维没 padding。</b>本例的访问模式恰好无冲突，但换成按列读 <code>As[k][threadIdx.y]</code> 之类的写法就会 32 路冲突（2.4）。</li>
+<li><b>shared 的第二维没 padding。</b>本例的访问模式恰好无冲突，但换成按列读 <code>As[k][threadIdx.y]</code> 之类的写法就会 32 路冲突（2.5）。</li>
 <li><b>把 TF32 当无损。</b>10 位尾数对累计误差很敏感；需要高精度时用 FP32 或补偿求和。</li>
 <li><b>只测 kernel 不测传输。</b>一次 \(1024^3\) 的 GEMM 计算约 0.3 ms，传输可能更久。</li>
 <li><b>没有 warmup 就报数字。</b>第一次运行包含时钟爬升和 cache 冷启动，见 7.1。</li>

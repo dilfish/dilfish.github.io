@@ -77,7 +77,41 @@ float *px, *py, *pz, *pw;</code></pre>
 <p>问自己：<b>同一个 warp 的 32 个 lane，在一次访存里覆盖多少字节？</b>理想值是 128 B（<code>float</code>）或 512 B（<code>float4</code>）。如果每个 lane 各走各的 128 B，有效带宽就掉到 1/8。</p>
 </div>
 
-<h2>2.4 shared memory 与 bank conflict</h2>
+<h2>2.4 间接寻址：当地址是查表来的</h2>
+<p>2.3 的三种形态有一个共同前提：<b>地址由下标算出来</b>，<code>i</code> 定了，地址就定了。分页 KV 打破了这个前提 —— 逻辑上的第 3 页在物理上可能是第 42 页，地址要先读一张表。</p>
+<pre class="fig">逻辑页 0  →  物理页 17   ┐
+逻辑页 1  →  物理页 3    │  连续的逻辑页
+逻辑页 2  →  物理页 42   │  物理上不连续
+逻辑页 3  →  物理页 8    ┘
+           每页 128 token：页内仍然连续</pre>
+<p>图里最重要的一点是：<b>页内仍然是连续的</b>。所以 2.3 的账没有被推翻，只是换了一个变量。</p>
+<p><b>账没有变。</b>最小单位还是 32 B sector，浪费仍然是「每 lane 有用字节 ÷ 32 B」。页表改变的不是公式，而是「32 个 lane 的地址落在几个地方」：</p>
+<ul>
+<li><b>每 lane 4 B</b>（一个 <code>float</code>）：32 个 lane 只要 128 B，实际搬回 1024 B → <b>8 倍</b>。</li>
+<li><b>每 lane 16 B</b>（<code>float4</code>）：只要 512 B，搬回 1024 B → <b>2 倍</b>。</li>
+<li><b>每 lane 528 B</b>（一条 token 的 KV，单层）：要 16.5 KB，搬回 17 KB → <b>1.03 倍</b>，只剩 sector 取整。</li>
+</ul>
+<p>看最后一条：每个 lane 一次要的字节够大时，sector 取整的损失只剩 3%。<b>「分页 KV 很浪费带宽」这句话在字节层面基本不成立</b> —— 真正的成本在下面三条。</p>
+<p><b>1. 依赖加载。</b><code>block_table[i]</code> 要先读一次，数据地址依赖它的结果，编译器不能提前发这条请求。2.2 的在途字节靠的正是「独立请求能排队」，依赖链把这个 ILP 砍掉，表现就是「占用率够、带宽上不去」。</p>
+<p><b>2. 页边界。</b>一个 warp 读 512 B，起始位置在页内随机，跨页概率约 <code>512 ÷ 页字节</code>。以 KV 为例（每 (层 · token) 528 B）：16 token 一页（8448 B）→ <b>6.1%</b>；128 token 一页（67584 B）→ <b>0.76%</b>。差 8 倍，但一次跨页只多一组事务 —— <b>这是三条里最小的一项，别把它当主因</b>。</p>
+<p><b>3. 并行度。</b>32 个 lane 各落在不同页时，硬件没法把它们合并成一条 128 B line：每个 lane 一个 sector，同时在飞的请求数涨上去，而能用来藏延迟的 warp 只有 64 个（1.5）。<b>页表本身不贵，贵的是它把「一次请求」变成「32 次」。</b></p>
+<p><b>三个缓解。</b></p>
+<ul>
+<li><b>调页大小。</b>16 → 128 token，跨页概率降 8 倍；代价是尾页（平均半个）：4096 token 的序列，128 页的尾浪费约 1.6%，16 页只有 0.2%。页大小是在「跨页概率」和「尾页浪费」之间取，不是越大越好。</li>
+<li><b>把页号提到 warp 维度。</b>让一个 warp 只处理同一页里的 token（page-major 排布），页就成了合并的单位，32 个 lane 又回到一条 line。</li>
+<li><b>整页搬进 shared 再挑。</b>顺序读一整页 → shared → 在 shared 里按索引取。随机访问的代价从「显存 sector」换成「shared bank conflict」（2.5），量级差一个数量级。生产框架里的 KV 加载接口就是按「连续的物理页区间」批量搬，正是这个形状。</li>
+</ul>
+<p><b>极端形态：稀疏索引。</b>decode 时常常不是读整个窗口，而是按 top-k 索引读 KV（某生产框架的 decode 直接拿 <code>indices_in_kvcache</code> 做注意力）。这时 32 个 lane 的 32 个 token 可能来自 32 个不同页，而每个 lane 只取其中 4 B 的一个分量 —— <b>回到 8 倍</b>。同一个公式，粒度不同，答案就不同：先看每 lane 要多少字节，再看地址怎么来。</p>
+<div class="key"><span class="tag">判断方法</span>
+<p>拿到一个 kernel，按顺序问三句：<b>① 地址能直接算吗？</b>能 → 用 2.3 的账；不能 → 先看索引表多大、在不在 L2。<b>② 一个 warp 的 32 个地址落在几个页里？</b>大于 1 就有合并损失，但一次跨页只值一组事务。<b>③ 每 lane 一次要多少字节？</b>小于 16 B 基本没救；到几百 B 的量级，字节就不是问题，成本回到延迟和并行度。</p>
+</div>
+<p><b>练习。</b>取 <code>block_size</code> 为 16 和 128 两种页，各画出一个 warp 读 512 B 的三种落点（页内、刚好跨页、跨两页），算出事务数与有效字节比；再回答：为什么 128 页更划算，但生产里不会无限调大？</p>
+<div class="note">
+<p><b>数字出处。</b>528 B/(层 · token) 的 SWA KV、128 token 的落盘与复用粒度、per-16 的 FP4 主 KV、<code>indices_in_kvcache</code> 的稀疏 decode，均取自 DeepSeek 开源的 DeepInfer（<code>main@774ce24</code>，Apache-2.0）。</p>
+<p><code>doc/inference_deployment_qa.md</code> · <code>attention_backend.py</code>（<code>decode_mla_mqa_sparse</code>） · <code>csrc/engine/scheduler.hpp:116</code>（<code>max_num_batched_tokens ≥ block_size</code>）</p>
+</div>
+
+<h2>2.5 shared memory 与 bank conflict</h2>
 <p>shared memory 被划分成 <b>32 个 bank</b>，每个 bank 宽 4 B。一次访问中，如果 warp 的 32 个地址落在 32 个不同 bank 上，就能一次完成；如果多个 lane 落在同一个 bank 的<b>不同地址</b>，就串行化（n-way conflict）；如果落在<b>同一地址</b>，则是广播，不冲突。</p>
 <p>bank 编号就是字地址对 32 取模：</p>
 \[
@@ -89,7 +123,7 @@ float *px, *py, *pz, *pw;</code></pre>
 // 连续变化的 r 或 c 都会落到不同的 bank</code></pre>
 <p>填充一个 <code>float</code> 只多花 128 B，却能消掉整个冲突。这是 GPU 上最划算的优化之一。</p>
 
-<h2>2.5 实战：矩阵转置</h2>
+<h2>2.6 实战：矩阵转置</h2>
 <p>转置是“读合并、写就必然不合并”的典型。朴素写法让一个方向完美、另一个方向完全散开：</p>
 <p class="file">transpose.cu</p>
 <pre><code>constexpr int T = 32;
@@ -120,7 +154,7 @@ __global__ void transpose_tiled(const float* in, float* out, int rows, int cols)
 <p>账很容易算：转置的流量是读 4 B + 写 4 B = 8 B/元素。1 GB 数据就是 8 GB 流量，在 3.35 TB/s 下约 2.4 ms。朴素版的写端每次浪费 8 倍 sector，读端正常，所以总时间大约是理想值的 4–5 倍；分块版把浪费消掉，代价只是 4 KB 的 shared 和一次 barrier。</p>
 <p>顺便注意：<code>transpose_tiled</code> 的读端仍然是一个 warp 读连续 32 个 <code>float</code>（因为 <code>threadIdx.x</code> 最快变化），写端也是。转置的“不连续”被关在了 shared memory 里，而 shared 的随机访问代价只有 bank conflict，没有 sector 浪费。</p>
 
-<h2>2.6 只读数据与向量化</h2>
+<h2>2.7 只读数据与向量化</h2>
 <p>只读的输入加上 <code>const __restrict__</code>，编译器才会放心走只读缓存（LDG），不会因为“可能和输出别名”而插入额外同步：</p>
 <pre><code>__global__ void axpy(float* __restrict__ y,
                      const float* __restrict__ x, float a, int n) {
@@ -129,7 +163,7 @@ __global__ void transpose_tiled(const float* in, float* out, int rows, int cols)
 }</code></pre>
 <p>L2 是全卡共享的，跨 block 的复用发生在 L2。矩阵乘里 A、B 被不同 block 反复读，靠的就是 L2 命中；再往上才是 shared 的 block 内复用（第 5 节）。</p>
 
-<h2>2.7 和 CPU 的对照</h2>
+<h2>2.8 和 CPU 的对照</h2>
 <ul>
 <li><b>缓存管理</b>：CPU 自动；GPU 的 shared 要手写加载/同步，且只活在一个 block 内。</li>
 <li><b>最小粒度</b>：CPU cache line 64 B；GPU sector 32 B、L2 line 128 B。跨步访问在两边都亏，但 GPU 的惩罚更直接（按 sector 计费）。</li>
@@ -138,13 +172,14 @@ __global__ void transpose_tiled(const float* in, float* out, int rows, int cols)
 <li><b>分配</b>：<code>malloc</code> 便宜、可超卖、可换页；<code>cudaMalloc</code> 同步且慢（驱动要建页表映射），显存不可超卖，OOM 是硬失败。</li>
 </ul>
 
-<h2>2.8 容易写错的地方</h2>
+<h2>2.9 容易写错的地方</h2>
 <div class="warn"><span class="tag">常见错误</span>
 <ul>
 <li><b>写了 shared 却忘了 <code>__syncthreads()</code>。</b>读到的可能是别的 lane 还没写入的旧值，而且不一定每次都错。</li>
 <li><b>以为 shared 会跨 block 保留。</b>它的生命周期等于 block；下一个 block 拿到的可能是任意残留数据。</li>
 <li><b>越界写不会报错。</b>GPU 上没有数组边界检查，可能静默改坏别的数据，也可能让整个 kernel 崩掉；用 <code>compute-sanitizer</code> 查。</li>
 <li><b><code>float4</code> 没对齐。</b>要求地址是 16 B 的倍数，否则行为未定义或性能骤降。</li>
+<li><b>把「分页」当成字节浪费。</b>页内仍然连续，sector 账不变；分页真正贵的是依赖加载和并行度，调页大小只在跨页概率与尾页浪费之间取舍。</li>
 <li><b>只优化读，不看写。</b>转置、直方图、稀疏 scatter 的瓶颈常常在写端。</li>
 <li><b>shared 开太大。</b>每 block 超过 48 KB 需要 <code>cudaFuncSetAttribute</code>，否则 launch 直接失败；同时会把占用率压下去。</li>
 </ul>
