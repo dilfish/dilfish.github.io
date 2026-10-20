@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>9. GQA：多个 Q 头共用一个 K/V 头 · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="09-gqa.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s9">9. GQA：多个 Q 头共用一个 K/V 头</h1>
+
+<h2>9.1 定义</h2>
+<p>多头注意力（MHA）里 Q、K、V 的头数相同，都是 \(H\)。GQA（grouped-query attention）让 K/V 只有 \(H_{kv}\) 个头，且 \(H\) 是 \(H_{kv}\) 的整数倍。第 \(h\) 个 Q 头使用第</p>
+\[
+g(h)=\left\lfloor \frac{h}{\,H/H_{kv}\,}\right\rfloor
+\]
+<p>个 K/V 头。Qwen3-0.6B：\(H=16\)、\(H_{kv}=8\)，组大小 \(G=2\)，所以 Q 头 0、1 用 KV 头 0，Q 头 2、3 用 KV 头 1，依此类推。</p>
+<p>写成公式，对每个 Q 头 \(h\)：</p>
+\[
+o_h=\operatorname{softmax}\left(\frac{q_hK_{g(h)}^\top}{\sqrt d}+M\right)V_{g(h)} .
+\]
+<p>同一组内的两个 Q 头共享 K/V，但 \(q_h\) 不同，所以它们的注意力权重仍然不同；共享的只是“被查询的键值内容”。</p>
+
+<h2>9.2 省了什么</h2>
+<p>KV cache 每 token 的字节数：</p>
+\[
+\underbrace{2}_{K,V}\times L\times H_{kv}\times d\times \text{bytes}.
+\]
+<p>MHA 则是 \(H\) 而不是 \(H_{kv}\)，所以 GQA 把 KV 内存和 K/V 投影的计算量降为 \(H_{kv}/H=1/2\)。Qwen3-0.6B fp32：</p>
+\[
+2\times28\times8\times128\times4=229{,}376\text{ B}=224\text{ KiB/token},
+\]
+<p>MHA 会是 448 KiB/token。Q/K/V 投影里，k_proj、v_proj 的输出也从 2048 降到 1024。</p>
+<p>注意：<b>注意力的 QK^T / AV 计算量并没有按这个比例下降</b>，因为 16 个 Q 头仍然各自算分数；省的是 KV 的存储、读取和 K/V 投影。GQA 是“内存/带宽”优化，不是“注意力 FLOPs”优化。</p>
+<p>极端情况 \(H_{kv}=1\) 叫 MQA，省得更多但质量通常下降；GQA 是两者之间的折中。</p>
+<div class="warn"><span class="tag">映射写错不会报错</span>
+<p>如果写成 \(h \bmod H_{kv}\) 或 \(h\cdot H_{kv}/H\)，形状仍然对，但每个 Q 头读到了错误的 K/V，输出全错。正确是整数除法 \(h/G\)。</p>
+</div>
+<p><b>对应代码</b>：<code>model/config.go</code> 的 <code>KVGroupSize</code>，<code>model/attn.go</code> 的 <code>kvHead := h / group</code>。</p>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

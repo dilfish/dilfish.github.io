@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>3. RMSNorm：从 LayerNorm 推出来 · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="03-rmsnorm.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s3">3. RMSNorm：从 LayerNorm 推出来</h1>
+<p>归一化的目的：让送进下一层的向量尺度稳定，不随层数爆炸或消失。先看标准的 LayerNorm，再看 Qwen3 用的简化版。</p>
+
+<h2>3.1 LayerNorm：减均值、除标准差</h2>
+<p>对一个 \(n\) 维向量 \(x\)，定义</p>
+\[
+\mu=\frac1n\sum_{i=1}^n x_i,\qquad
+\sigma^2=\frac1n\sum_{i=1}^n (x_i-\mu)^2 .
+\]
+<p>LayerNorm 输出</p>
+\[
+y_i=\frac{x_i-\mu}{\sqrt{\sigma^2+\epsilon}}\,\gamma_i+\beta_i .
+\]
+<p>先验证“标准化后均值 0、方差 1”。忽略 \(\epsilon\) 和 affine 参数：</p>
+\[
+\sum_i (x_i-\mu)=n\mu-n\mu=0,
+\]
+\[
+\frac1n\sum_i\left(\frac{x_i-\mu}{\sigma}\right)^2
+=\frac{1}{\sigma^2}\cdot\frac1n\sum_i(x_i-\mu)^2
+=\frac{\sigma^2}{\sigma^2}=1 .
+\]
+<p>\(\epsilon\) 只是防止 \(\sigma=0\) 时除以 0；它让方差变成 \(\sigma^2/(\sigma^2+\epsilon)&lt;1\)，但 \(\sigma\) 正常时影响可以忽略。</p>
+
+<h2>3.2 RMSNorm：只除均方根，不减均值</h2>
+<p>RMSNorm 去掉减均值和偏置 \(\beta\)，只做缩放：</p>
+\[
+r=\sqrt{\frac1n\sum_{i=1}^n x_i^2+\epsilon},\qquad
+\boxed{y_i=\frac{x_i}{r}\,\gamma_i .}
+\]
+<p>名字里的 RMS 就是 root mean square：先平方、再平均、再开根号。和 LayerNorm 的差别：</p>
+<ul>
+<li>不减均值：省掉一次求均值和减法，实现更简单；</li>
+<li>没有 \(\beta\)：Qwen3 的 RMSNorm 只有 \(\gamma\)；</li>
+<li>\(\epsilon\) 放在根号<b>里面</b>，加在均方值上，不是加在开根号之后；</li>
+<li>\(\gamma\) 是直接乘，不是 Gemma 那种 \(1+\gamma\)。</li>
+</ul>
+
+<h2>3.3 尺度不变性：为什么可以“随便放大”</h2>
+<p>设 \(a>0\)，则 \(\operatorname{RMS}(ax)=\sqrt{\frac1n\sum a^2x_i^2}=a\operatorname{RMS}(x)\)。于是</p>
+\[
+\frac{(ax)_i}{\operatorname{RMS}(ax)}
+=\frac{a x_i}{a\operatorname{RMS}(x)}
+=\frac{x_i}{\operatorname{RMS}(x)} .
+\]
+<p>正数缩放完全被约掉；负数缩放会整体翻符号，但长度不变。这就是 RMSNorm 的“尺度不变性”：上一层把向量放大 100 倍，下一层看到的归一化结果几乎不变（\(\epsilon\) 会带来一点点差别）。</p>
+<p>如果 \(\gamma_i=1\)，输出满足</p>
+\[
+\frac1n\sum_i y_i^2=\frac{\frac1n\sum_i x_i^2}{\frac1n\sum_i x_i^2+\epsilon}\approx1,
+\]
+<p>即输出 RMS 约等于 1。手算：\(x=(3,4)\)，\(\operatorname{RMS}=\sqrt{(9+16)/2}=\sqrt{12.5}=3.5355\)，\(y=(0.8485,1.1314)\)，其平方平均 \(=(0.72+1.28)/2=1\)。</p>
+
+<h2>3.4 导数：需要 Jacobian，不是逐元素</h2>
+<p>令 \(s=\frac1n\sum_k x_k^2\)，\(r=(s+\epsilon)^{1/2}\)，则 \(y_i=x_i r^{-1}\gamma_i\)。对 \(x_j\) 求导：</p>
+<ol class="steps">
+<li>\(\dfrac{\partial s}{\partial x_j}=\dfrac{2x_j}{n}\)。</li>
+<li>由链式法则
+\[
+\frac{\partial r^{-1}}{\partial x_j}
+=-\frac12(s+\epsilon)^{-3/2}\cdot\frac{2x_j}{n}
+=-\frac{x_j}{n(s+\epsilon)^{3/2}} .
+\]</li>
+<li>再用乘积法则：
+\[
+\frac{\partial y_i}{\partial x_j}
+=\gamma_i\left[\delta_{ij}r^{-1}+x_i\left(-\frac{x_j}{n r^{3}}\right)\right]
+=\gamma_i\left[\frac{\delta_{ij}}{r}-\frac{x_ix_j}{n r^3}\right].
+\]</li>
+</ol>
+<p>和 softmax 一样，这不是对角矩阵：<b>改一个分量会通过 \(s\) 影响所有分量</b>。只是这个耦合是“全局缩放”，比 softmax 的 \(-p_ip_j\) 简单。</p>
+
+<h2>3.5 Qwen3 的 per-head QK-Norm</h2>
+<p>Qwen3 在注意力里对 Q 和 K 再做一次 RMSNorm，但归一化的范围是<b>每个头的 head_dim 维</b>，不是整个 \(H\times d\) 的拼接向量：</p>
+\[
+q_{h,d}\leftarrow \frac{q_{h,d}}{\operatorname{RMS}(q_{h,:})}\gamma_d,\qquad
+k_{g,d}\leftarrow \frac{k_{g,d}}{\operatorname{RMS}(k_{g,:})}\gamma_d .
+\]
+<p>如果对整条 2048 维向量归一化，所有头会被同一个尺度绑在一起；按头归一化让每个头独立。顺序也很重要：<b>先 QK-Norm，再 RoPE</b>。RoPE 是旋转，会保持长度；如果先旋转再归一化，旋转的信息会被缩放搅乱（虽然不一定报错，但和 HF 对不上）。</p>
+<div class="warn"><span class="tag">三个常见错误</span>
+<p>① \(\epsilon\) 放到根号外；② 把 \(\gamma\) 写成 \(1+\gamma\)；③ 对整条 Q/K 归一化而不是逐头。三种都能跑出“看起来合理”的数，但和参考实现差很远。</p>
+</div>
+<p><b>对应代码</b>：<code>model/norm.go</code> 的 <code>RMSNorm</code>，<code>model/attn.go</code> 的 <code>headRMSNorm</code>。</p>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

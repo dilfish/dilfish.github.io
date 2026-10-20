@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>8. RoPE：旋转位置编码为什么是相对的 · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="08-rope.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s8">8. RoPE：旋转位置编码为什么是相对的</h1>
+
+<h2>8.1 二维旋转矩阵从哪来</h2>
+<p>把平面向量 \((a,b)\) 逆时针旋转 \(\theta\)，希望变换是线性的、保持长度、保持夹角。设矩阵</p>
+\[
+R(\theta)=\begin{pmatrix}c&-s\\ s&c\end{pmatrix},\qquad c=\cos\theta,\ s=\sin\theta .
+\]
+<p>它把基向量 \((1,0)\) 送到 \((\cos\theta,\sin\theta)\)，把 \((0,1)\) 送到 \((-\sin\theta,\cos\theta)\)，正好是旋转后的两个基。验证保长度：</p>
+\[
+R^\top R=\begin{pmatrix}c&s\\-s&c\end{pmatrix}\begin{pmatrix}c&-s\\s&c\end{pmatrix}
+=\begin{pmatrix}c^2+s^2&0\\0&c^2+s^2\end{pmatrix}=I .
+\]
+<p>所以 \(\|R x\|^2=x^\top R^\top R x=x^\top x=\|x\|^2\)。用复数写更短：\((a+ib)e^{i\theta}=(a\cos\theta-b\sin\theta)+i(a\sin\theta+b\cos\theta)\)，实部虚部正好是上面两行。</p>
+
+<h2>8.2 位置变成旋转角度</h2>
+<p>对第 \(m\) 个位置、第 \(i\) 对维度，定义角频率 \(\omega_i\)，旋转角为 \(m\omega_i\)：</p>
+\[
+q'_m=R(m\omega_i)q,\qquad k'_n=R(n\omega_i)k .
+\]
+<p>关键性质：<b>内积只依赖相对位置 \(n-m\)</b>。证明只用 \(R(a)^\top=R(-a)\) 和 \(R(a)R(b)=R(a+b)\)：</p>
+\[
+\langle q'_m,k'_n\rangle
+=q^\top R(m\omega)^\top R(n\omega)k
+=q^\top R(-m\omega)R(n\omega)k
+=q^\top R((n-m)\omega)k .
+\]
+<p>右边只出现 \(n-m\)。绝对位置 \(m,n\) 被消掉了，剩下的是“这两个 token 隔多远”。对多头、多频率，点积是若干对这样的项之和，每一项都只依赖 \(n-m\)，所以整体也只依赖相对位置。</p>
+
+<h2>8.3 频率怎么选：几何级数</h2>
+<p>head_dim \(d=128\) 有 64 对维度。第 \(i\) 对（\(i=0,\dots,63\)）的频率取</p>
+\[
+\omega_i=\theta_{\text{base}}^{-2i/d},\qquad \theta_{\text{base}}=10^6 .
+\]
+<p>低维（\(i\) 小）频率高，转得快；高维频率低，转得慢。对应的波长 \(\lambda_i=2\pi/\omega_i=2\pi\,\theta_{\text{base}}^{2i/d}\)：</p>
+<div class="tablewrap"><table>
+<thead><tr><th>\(i\)</th><th class="num">\(\omega_i\)</th><th class="num">波长 \(\lambda_i\)（token）</th><th>直观</th></tr></thead>
+<tbody>
+<tr><td>0</td><td class="num">1</td><td class="num">6.28</td><td>每 6 个位置转一圈</td></tr>
+<tr><td>16</td><td class="num">\(10^{-1.5}\approx0.0316\)</td><td class="num">199</td><td>百级</td></tr>
+<tr><td>32</td><td class="num">\(10^{-3}=0.001\)</td><td class="num">6283</td><td>千级</td></tr>
+<tr><td>63</td><td class="num">\(10^{-5.906}\approx1.24\times10^{-6}\)</td><td class="num">\(5.06\times10^6\)</td><td>在 40960 上下文里几乎不转</td></tr>
+</tbody></table></div>
+<p>高低频搭配：低频维度负责“远距离的粗定位”，高频维度负责“近距离的细分辨”。\(\theta_{\text{base}}=10^6\) 让最慢的维度在常见上下文长度内几乎不变，相当于给模型留了长距离的“全局坐标”。</p>
+
+<h2>8.4 HF 的 rotate_half 就是上面的旋转</h2>
+<p>代码里不是两两配对 \((2i,2i+1)\)，而是把 head_dim 从中间劈开，配对 \((i,i+d/2)\)。HF 的写法：</p>
+\[
+\operatorname{rotate\_half}(x)=\begin{pmatrix}-x_{\text{hi}}\\ x_{\text{lo}}\end{pmatrix},
+\qquad
+\text{out}=x\cos+\operatorname{rotate\_half}(x)\sin .
+\]
+<p>把 \(x=(x_{\text{lo}},x_{\text{hi}})\) 代进去，逐分量：</p>
+\[
+\text{out}_{\text{lo}}=x_{\text{lo}}\cos-x_{\text{hi}}\sin,\qquad
+\text{out}_{\text{hi}}=x_{\text{hi}}\cos+x_{\text{lo}}\sin .
+\]
+<p>这正是 \(R(\theta)\) 作用在 \((x_{\text{lo}},x_{\text{hi}})\) 上的结果。所以“劈半配对”和“相邻配对”只是索引组织不同，数学上是同一组二维旋转；但<b>必须和权重训练时的约定一致</b>，否则数值全错。</p>
+<p>另一个等价性：HF 把频率拼成 \(\operatorname{cat}(\text{freqs},\text{freqs})\)，所以 \(\cos[i]=\cos[i+d/2]\)，和上面的写法一致。</p>
+
+<h2>8.5 应用位置</h2>
+<p>RoPE 只作用在 Q 和 K 上，不作用在 V 上：分数来自 Q·K，位置信息通过旋转进入“匹配”；V 是内容，旋转它只会把内容也搅乱，没有好处。并且增量解码时只旋转<b>新 token</b>，历史 K 已经在 cache 里是旋转过的，重复旋转会叠加角度。</p>
+<div class="warn"><span class="tag">最隐蔽的坑</span>
+<p>增量解码传的必须是<b>绝对位置</b>（全局第几个 token），不是“本次数组的下标”。传错后模型仍然能生成看似通顺的文字，只是数值和参考实现对不上，极难排查。</p>
+</div>
+<p><b>对应代码</b>：<code>model/rope.go</code> 的 <code>ApplyRoPE</code>；<code>model/attn.go</code> 里 Q/K 各调用一次，V 不调用。</p>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

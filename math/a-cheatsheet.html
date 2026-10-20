@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>附录 A. 公式速查表 · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="a-cheatsheet.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="sa">附录 A. 公式速查表</h1>
+<div class="tablewrap"><table class="sym">
+<thead><tr><th>名称</th><th>公式</th><th>本项目位置</th></tr></thead>
+<tbody>
+<tr><td>softmax</td><td>\(p_i=e^{z_i}/\sum_j e^{z_j}\)</td><td><code>tensor.go Softmax</code></td></tr>
+<tr><td>log-sum-exp</td><td>\(\operatorname{LSE}(z)=M+\ln\sum_j e^{z_j-M}\)</td><td><code>sample.go shiftAndLogSum</code></td></tr>
+<tr><td>logprob</td><td>\(\log p_i=z_i-\operatorname{LSE}(z)\)</td><td><code>sample.go LogProbAt</code></td></tr>
+<tr><td>熵</td><td>\(H(p)=-\sum_i p_i\ln p_i\)</td><td>概念</td></tr>
+<tr><td>交叉熵</td><td>\(H(p,q)=-\sum_i p_i\ln q_i\)</td><td>训练损失</td></tr>
+<tr><td>KL</td><td>\(D(p\|q)=\sum_i p_i\ln(p_i/q_i)\)</td><td>概念</td></tr>
+<tr><td>困惑度</td><td>\(\operatorname{PPL}=\exp(\frac1N\sum_t -\ln q_t)\)</td><td>概念</td></tr>
+<tr><td>RMSNorm</td><td>\(y_i=x_i\gamma_i/\sqrt{\frac1n\sum x_j^2+\epsilon}\)</td><td><code>norm.go RMSNorm</code></td></tr>
+<tr><td>SiLU</td><td>\(x\sigma(x)=x/(1+e^{-x})\)</td><td><code>tensor.go SiLU</code></td></tr>
+<tr><td>SwiGLU</td><td>\(W_d(\operatorname{SiLU}(W_gx)\odot W_ux)\)</td><td><code>mlp.go MLP</code></td></tr>
+<tr><td>缩放点积</td><td>\(\operatorname{softmax}(QK^\top/\sqrt d+M)V\)</td><td><code>attn.go Attention</code></td></tr>
+<tr><td>RoPE</td><td>\(q'_m=R(m\omega)q,\ \langle q'_m,k'_n\rangle=f(n-m)\)</td><td><code>rope.go ApplyRoPE</code></td></tr>
+<tr><td>GQA 映射</td><td>\(g(h)=\lfloor h/(H/H_{kv})\rfloor\)</td><td><code>config.go KVGroupSize</code></td></tr>
+<tr><td>KV 内存</td><td>\(2LH_{kv}d\cdot\text{bytes}\)</td><td><code>kv.go BytesPerToken</code></td></tr>
+<tr><td>分页地址</td><td>\(\text{phys}=\text{table}[\ell][\lfloor p/B\rfloor],\ \text{slot}=p\bmod B\)</td><td><code>pagedkv.go kSlot</code></td></tr>
+<tr><td>online softmax</td><td>\(m{=}\max(m,m_b),\ o{=}oe^{m-m'}{+}o_be^{m_b-m'}\)</td><td><code>pagedattn.go attentionPaged</code></td></tr>
+<tr><td>温度</td><td>\(p_i\propto e^{z_i/T}\)</td><td><code>sample.go Sample</code></td></tr>
+<tr><td>top-p</td><td>最小 \(m\) 使 \(\sum_{j\le m}p_{(j)}\ge p\)</td><td><code>sample.go topPFloat64</code></td></tr>
+<tr><td>逆变换</td><td>\(X=\min\{i:u&lt;C_i\}\)</td><td><code>sample.go sampleOneFloat64</code></td></tr>
+</tbody></table></div>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

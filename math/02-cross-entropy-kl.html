@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>2. 交叉熵、KL 散度、困惑度 · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="02-cross-entropy-kl.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s2">2. 交叉熵、KL 散度、困惑度</h1>
+<p>训练语言模型时，每个位置都有一个“真实下一个 token”。模型给出分布 \(q\)，我们希望 \(q\) 在真实 token 上尽量大。这一节把这句直觉变成一个可优化的数。</p>
+
+<h2>2.1 自信息：概率越小，信息越多</h2>
+<p>设事件概率为 \(p\)。我们希望一个函数 \(I(p)\) 满足：</p>
+<ul>
+<li>\(p=1\) 时 \(I=0\)（必然事件没有信息）；</li>
+<li>\(p\) 越小 \(I\) 越大；</li>
+<li>两个独立事件同时发生的信息等于各自信息之和：\(I(p_1p_2)=I(p_1)+I(p_2)\)。</li>
+</ul>
+<p>和 1.1 同样的函数方程（把乘法变加法，取负号），唯一解是</p>
+\[
+I(p)=-\log_b p .
+\]
+<p>取 \(b=2\) 单位是比特，取 \(b=e\) 单位是 nat。本页默认自然对数（和代码一致）。例：\(p=0.5\) 时 \(I=\ln2=0.693\) nat。</p>
+
+<h2>2.2 熵：平均有多意外</h2>
+<p>把 \(I(p_i)\) 按 \(p_i\) 加权平均，就是熵：</p>
+\[
+H(p)=\sum_i p_i\big(-\ln p_i\big)=-\sum_i p_i\ln p_i .
+\]
+<p>均匀分布最“意外”。证明用拉格朗日乘子：在约束 \(\sum_i p_i=1\) 下最大化 \(H\)。令</p>
+\[
+L=-\sum_i p_i\ln p_i-\lambda\left(\sum_i p_i-1\right),
+\]
+<p>对 \(p_i\) 求偏导并令其为 0：\(-\ln p_i-1-\lambda=0\)，所以每个 \(p_i=e^{-1-\lambda}\) 都相等。结合和为 1 得 \(p_i=1/V\)，此时 \(H=\ln V\)。这也说明：<b>分布越平，熵越大</b>。</p>
+
+<h2>2.3 交叉熵：用真实分布的权重，量模型的意外</h2>
+<p>真实分布 \(p\)、模型分布 \(q\)。如果只用 \(q\) 自己的熵，模型“自信地犯错”时反而熵很小，不能当损失。正确做法是：<b>用 \(p\) 当权重，去量 \(-\ln q\) 的平均</b>：</p>
+\[
+H(p,q)=-\sum_i p_i\ln q_i .
+\]
+<p>训练时 \(p\) 是 one-hot：正确 token \(y\) 处为 1，其余为 0。于是只剩一项：</p>
+\[
+H(p,q)=-\ln q_y .
+\]
+<p>这就是语言模型的逐 token 损失（negative log-likelihood, NLL）。\(q_y\) 越接近 1，损失越接近 0。</p>
+
+<h2>2.4 KL 散度：多花了多少信息</h2>
+<p>交叉熵可以拆开：</p>
+\[
+H(p,q)=-\sum_i p_i\ln q_i
+=-\sum_i p_i\ln p_i+\sum_i p_i\ln\frac{p_i}{q_i}
+=H(p)+D_{\mathrm{KL}}(p\|q),
+\]
+<p>其中</p>
+\[
+\boxed{D_{\mathrm{KL}}(p\|q)=\sum_i p_i\ln\frac{p_i}{q_i}\;\ge\;0.}
+\]
+<p>读法：<b>用 \(q\) 去编码来自 \(p\) 的数据，平均每次多花多少 nat</b>。\(p=q\) 时比值为 1，\(\ln1=0\)，KL 为 0。</p>
+<p><b>非负性（Gibbs 不等式）</b>只用 \(\ln x\le x-1\)（等号仅当 \(x=1\)）。令 \(x=q_i/p_i\)：</p>
+\[
+-D_{\mathrm{KL}}=\sum_i p_i\ln\frac{q_i}{p_i}
+\le\sum_i p_i\left(\frac{q_i}{p_i}-1\right)
+=\sum_i q_i-\sum_i p_i=1-1=0 .
+\]
+<p>所以 \(D_{\mathrm{KL}}\ge0\)，且等号当且仅当所有 \(p_i>0\) 处 \(q_i=p_i\)。</p>
+<div class="warn"><span class="tag">不是距离</span>
+<p>KL 不对称：\(D(p\|q)\ne D(q\|p)\)。训练用 \(D(p_{\text{真实}}\|q_{\text{模型}})\)，它的特点是“真实为 0 的地方不管，真实非 0 而模型给 0 的地方罚无穷大”，所以模型不敢漏掉正确答案。</p>
+</div>
+
+<h2>2.5 困惑度：把损失变成“在几个词里犹豫”</h2>
+<p>一段长度 \(N\) 的文本，平均 NLL 为 \(\mathcal{L}=\frac{1}{N}\sum_{t=1}^{N}(-\ln q_t)\)。困惑度定义为</p>
+\[
+\operatorname{PPL}=e^{\mathcal{L}}
+=\exp\left(-\frac1N\sum_t\ln q_t\right)
+=\left(\prod_{t=1}^{N}\frac{1}{q_t}\right)^{1/N}.
+\]
+<p>最后一步用了 \(\exp(\frac1N\sum\ln a_t)=(\prod a_t)^{1/N}\)。所以 PPL 是“每个位置正确 token 概率倒数的几何平均”：模型平均等效于在 PPL 个等概率候选里猜。均匀分布 \(q_t=1/V\) 时 \(\mathcal{L}=\ln V\)，\(\operatorname{PPL}=V\)；完美模型 \(q_t=1\) 时 PPL=1。</p>
+<p>例：若正确 token 的概率是 0.665，则 \(\mathcal{L}=-\ln0.665=0.408\)，\(\operatorname{PPL}=e^{0.408}=1.50\)。</p>
+
+<h2>2.6 和本项目 server 的 logprobs 对应</h2>
+<p>OpenAI 风格的 <code>logprobs</code> 返回的是<b>原始分布</b>的对数概率，不受采样温度、top-k、top-p 影响：</p>
+\[
+\log q_i=z_i-\operatorname{LSE}(z).
+\]
+<p>代码里 <code>LogSoftmax32</code> / <code>LogProbAt</code> 只做这件事；采样用的分布是另一条路径（先除以温度、再截断）。两者不能混为一谈：<b>logprobs 描述模型，采样参数描述解码策略</b>。</p>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

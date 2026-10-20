@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>7. 注意力：点积、缩放、因果掩码 · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="07-attention.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s7">7. 注意力：点积、缩放、因果掩码</h1>
+
+<h2>7.1 用点积衡量“查询”和“键”的匹配</h2>
+<p>每个位置产生三个向量：query \(q\)（我在找什么）、key \(k\)（我能提供什么）、value \(v\)（我实际携带的内容）。最自然的匹配分数是内积：</p>
+\[
+s_{ij}=\langle q_i,k_j\rangle .
+\]
+<p>内积大表示方向一致。为了让不同头、不同层的分数尺度可比，除以 \(\sqrt d\)，其中 \(d\) 是每个头的维度：</p>
+\[
+s_{ij}=\frac{\langle q_i,k_j\rangle}{\sqrt d}.
+\]
+<p>为什么偏偏是 \(\sqrt d\)？下面用方差算。</p>
+
+<h2>7.2 缩放的推导：点积的方差是 d</h2>
+<p>假设 \(q,k\in\mathbb{R}^d\) 的每个分量独立、均值为 0、方差为 \(\sigma^2\)。记 \(s=\langle q,k\rangle=\sum_{a=1}^d q_a k_a\)。</p>
+<ol class="steps">
+<li>期望：\(\mathbb{E}[s]=\sum_a\mathbb{E}[q_a]\mathbb{E}[k_a]=0\)。</li>
+<li>方差：由独立性，和的方差等于方差之和；且 \(\mathbb{E}[q_a k_a]=0\)，所以
+\[
+\operatorname{Var}(q_ak_a)=\mathbb{E}[q_a^2k_a^2]=\mathbb{E}[q_a^2]\mathbb{E}[k_a^2]=\sigma^4 .
+\]</li>
+<li>因此
+\[
+\operatorname{Var}(s)=\sum_{a=1}^d\sigma^4=d\sigma^4,\qquad
+\operatorname{std}(s)=\sqrt d\,\sigma^2 .
+\]</li>
+</ol>
+<p>取 \(\sigma^2=1\)，点积的标准差是 \(\sqrt d\)。维度越大，分数越容易跑到很大的正负值。softmax 对大分数非常敏感：差几个数量级就变成 one-hot，梯度几乎为 0（饱和）。除以 \(\sqrt d\) 后标准差回到 1，分数落在 softmax 的“敏感区”。</p>
+<div class="key"><span class="tag">结论</span>
+<p>\(\dfrac{1}{\sqrt d}\) 不是玄学，而是把“\(d\) 个独立项相加”带来的 \(\sqrt d\) 倍标准差抵消掉。</p>
+</div>
+
+<h2>7.3 因果掩码：把未来设为 \(-\infty\)</h2>
+<p>自回归模型在位置 \(i\) 只能看 \(j\le i\)。做法是给分数加一个掩码矩阵：</p>
+\[
+M_{ij}=\begin{cases}0,&j\le i,\\-\infty,&j>i.\end{cases}
+\qquad
+A_{ij}=\frac{e^{s_{ij}+M_{ij}}}{\sum_{k}e^{s_{ik}+M_{ik}}}.
+\]
+<p>因为 \(e^{-\infty}=0\)，未来位置的权重精确为 0，softmax 只在 \(j\le i\) 上归一化。用一个大负数（比如 \(-10^9\)）也“差不多”，但 \(e^{-10^9}\) 在 float32 里是 0，和 \(-\infty\) 效果一样；用 \(-\infty\) 语义更清楚，也能避免“大负数不够大”的边界情况。</p>
+<div class="warn"><span class="tag">掩码位置</span>
+<p>掩码必须加在 softmax <b>之前</b>，而且加在缩放后的分数上。加在 softmax 之后再把权重清零会破坏归一化（分母没变），输出会偏小。</p>
+</div>
+
+<h2>7.4 输出是 value 的凸组合</h2>
+<p>对固定的一行 \(i\)，权重 \(\alpha_j=A_{ij}\) 满足 \(\alpha_j\ge0\)、\(\sum_j\alpha_j=1\)。输出</p>
+\[
+o_i=\sum_j\alpha_j v_j .
+\]
+<p>这是 \(v_j\) 的<b>凸组合</b>：每个坐标都落在所有 \(v_j\) 对应坐标的最小值和最大值之间。直觉上，注意力在做“按相关性加权平均”，不会凭空造出超出候选范围的值。这也是为什么注意力的输出尺度大致由 V 的尺度决定。</p>
+
+<h2>7.5 多头：把 128 维切成 16 个头</h2>
+<p>Qwen3-0.6B 的 q_proj 输出 2048 维，分成 \(H=16\) 个头，每头 \(d=128\) 维。每个头独立做上面的注意力，得到 16 个 128 维输出，拼成 2048 维，再过一个 \(2048\times1024\) 的 o_proj 回到 1024 维。</p>
+<p>注意 \(H\cdot d=2048\ne h=1024\)：Qwen3 的 head_dim 是显式配置的 128，不是 \(h/H=64\)。所以 o_proj 的输入维度是 2048，而不是 1024。</p>
+
+<h2>7.6 计算量：prefill 是平方，decode 是线性</h2>
+<p>长度 \(T\)、每头维度 \(d\)、\(H\) 个头，忽略线性投影：</p>
+<ul>
+<li>\(QK^\top\)：每个头 \(T\times T\) 个分数，每个是 \(d\) 次乘加，约 \(2T^2d\) FLOP；\(H\) 个头 \(2HT^2d\)。</li>
+<li>\(AV\)：同样 \(2HT^2d\)。</li>
+<li>合计每层约 \(4HT^2d\)。代入 \(H=16,d=128\)：\(8192T^2\)。</li>
+</ul>
+<p>decode 时只有 1 个新 query，但要和全部 \(T\) 个 key 做点积：每层约 \(4HTd\)，对 \(T\) 是线性的。<a href="10-kv-cache.html">第 10 节</a>会用 KV cache 把“重复算历史”降成“只算新 token”。</p>
+
+<p><b>对应代码</b>：<code>model/attn.go</code> 的 <code>Attention</code>；因果掩码在 <code>scores[j] = -Inf</code> 那几行。</p>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>0. 心智模型：吞吐机器与延迟机器 · GPU 编程基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EG%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="00-model.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">GPU 编程基础</a>
+</header>
+<main>
+<article>
+<h1 id="s0">0. 心智模型：吞吐机器与延迟机器</h1>
+<p>GPU 不是“更快的 CPU”。它是一次芯片面积上的重新分配：<b>砍掉让单线程变快的一切，换成更多的执行单元</b>。理解了这个取舍，后面所有“为什么这么写”都有了解释。</p>
+
+<h2>0.1 两种不同的优化目标</h2>
+<p>CPU 的每一代改进，大多服务于“让一个线程更快”：乱序执行、分支预测、深流水、巨大的多级 cache、高主频。GPU 反过来：核心简单、频率低、每 SM 的 cache 很小，但把成百上千个执行单元堆在一起，用海量并行把延迟藏起来。</p>
+<p>用一个粗糙的模型描述任务耗时：</p>
+\[
+T \;\approx\; T_{\text{关键路径}} \;+\; \frac{W}{p},
+\]
+<p>其中 \(W\) 是总工作量，\(p\) 是有效并行度。CPU 把第一项压到极小（一次 cache 命中只要几纳秒）；GPU 主动接受很大的第一项（单线程慢、访存 500&nbsp;ns、kernel 启动 5&nbsp;µs），换取第二项的分母极大。</p>
+<div class="tablewrap"><table class="cmp">
+<thead><tr><th>指标</th><th>服务器 CPU（64 核级）</th><th>H100 SXM</th></tr></thead>
+<tbody>
+<tr><td>时钟</td><td class="num">2.5–3.5 GHz</td><td class="num">约 1.8 GHz</td></tr>
+<tr><td>并行执行宽度</td><td class="num">64 核 × 8–16 lane</td><td class="num">132 SM × 128 lane</td></tr>
+<tr><td>FP32 峰值</td><td class="num">几 TFLOPS</td><td class="num">67 TFLOPS</td></tr>
+<tr><td>内存带宽</td><td class="num">0.3–0.6 TB/s</td><td class="num">3.35 TB/s</td></tr>
+<tr><td>片上缓存</td><td class="num">几十到几百 MB</td><td class="num">50 MB L2 + 可配置 shared</td></tr>
+</tbody></table></div>
+<p>注意最后两行：GPU 的带宽约为 CPU 的 5–10 倍，算力约为 10–50 倍，但时钟更低、缓存更小。所以 GPU 的强项是<b>规则、密集、可并行</b>的计算，而不是“所有程序都变快”。</p>
+
+<h2>0.2 三个直接后果</h2>
+<ol class="steps">
+<li><b>并行度必须足够。</b>一个 SM 最多常驻 64 个 warp（2048 线程），靠在这些 warp 之间轮换，把一条指令 500&nbsp;ns 的访存延迟藏起来。如果只有几百个线程，SM 会大量空转。</li>
+<li><b>分支变贵。</b>一个 warp 的 32 个 lane 共享一条指令流。如果 lane 走了不同分支，硬件只能带着掩码把两条路径各执行一遍（见 1.2）。</li>
+<li><b>数据要自己搬。</b>CPU 的 cache 由硬件自动管理；GPU 的 shared memory 是程序员手动管理的 scratchpad。更重要的是显存与主机内存物理分离，拷贝要过 PCIe，单向只有 32–64 GB/s。</li>
+</ol>
+<div class="key"><span class="tag">一句话</span>
+<p>CPU 优化延迟，GPU 优化吞吐。判断一段代码该不该上 GPU，先问两件事：<b>并行度够不够大</b>，<b>分支够不够整齐</b>。</p>
+</div>
+
+<h2>0.3 为什么“延迟”这么难藏：Little 定律</h2>
+<p>要跑满带宽，必须有足够多的请求同时在路上。设带宽为 \(BW\)、单次访存延迟为 \(t_{\text{lat}}\)，则需要的在途字节数为</p>
+\[
+N_{\text{inflight}} \;=\; BW \times t_{\text{lat}} .
+\]
+<p>代入 H100：\(3.35\times10^{12}\times600\times10^{-9}\approx 2.0\) MB。也就是任意时刻要有 2 MB 的读请求在飞。平均到每个 SM 约 15 KB；一个 warp 一次读 128 B，就需要约 120 个 warp 同时在等——<b>超过一个 SM 能常驻的 64 个 warp</b>。所以真实 kernel 必须让每个线程一次读更多（比如 <code>float4</code>，一个 warp 512 B），或者让每个线程同时发多个独立请求（ILP），否则永远跑不满带宽。第 2.2 节会把这条账算完。</p>
+
+<h2>0.4 什么时候不该用 GPU</h2>
+<ul>
+<li><b>数据太小</b>：\(N\) 只有几万时，传输加启动的开销远超计算本身（见 0.5 末尾的时间账）。</li>
+<li><b>分支密集、指针追逐</b>：树遍历、解析器、哈希表、图算法。warp 内路径一散，并行度就塌了。</li>
+<li><b>低延迟单请求</b>：交互式单条推理、交易系统。GPU 的尾延迟由 launch 和调度决定，不以微秒计。</li>
+<li><b>需要复杂同步</b>：全局锁、频繁的跨 block 通信。GPU 没有 mutex，跨 block 自旋还可能死锁（3.3）。</li>
+<li><b>双精度密集</b>：消费级显卡的 FP64 被大幅削减，需要 FP64 时先查规格。</li>
+<li><b>显存放不下</b>：显存不能超卖，放不下就是硬失败，不会像 CPU 那样换页。</li>
+</ul>
+<p>反过来说，GPU 擅长：大矩阵乘与卷积、逐元素运算、归约、扫描、排序、随机数、规则网格上的 stencil。它们的共同点是<b>同一段代码作用在大量数据上，且每个元素的工作量相近</b>。</p>
+
+<h2>0.5 第一个程序：向量加</h2>
+<p>先跑通完整链路：分配显存、拷贝、启动 kernel、拷回、检查错误。这段代码刻意写全了错误检查，因为 GPU 的错误是异步的，不查就等于没写。</p>
+<p class="file">vecadd.cu</p>
+<pre><code>#include &lt;cstdio&gt;
+#include &lt;cstdlib&gt;
+#include &lt;cuda_runtime.h&gt;
+
+#define CK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { \
+    fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(e_)); \
+    std::exit(1); } } while (0)
+
+__global__ void vecadd(const float* __restrict__ a,
+                       const float* __restrict__ b,
+                       float* __restrict__ c, size_t n) {
+    size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    size_t stride = (size_t)blockDim.x * gridDim.x;
+    for (; i &lt; n; i += stride)
+        c[i] = a[i] + b[i];
+}
+
+int main() {
+    const size_t n = 1u &lt;&lt; 24;                 // 16M 个 float = 64 MiB
+    const size_t bytes = n * sizeof(float);
+    float* h = (float*)std::malloc(bytes);
+    for (size_t i = 0; i &lt; n; ++i) h[i] = (float)i;
+
+    float *a, *b, *c;
+    CK(cudaMalloc((void**)&amp;a, bytes));
+    CK(cudaMalloc((void**)&amp;b, bytes));
+    CK(cudaMalloc((void**)&amp;c, bytes));
+    CK(cudaMemcpy(a, h, bytes, cudaMemcpyHostToDevice));
+    CK(cudaMemcpy(b, h, bytes, cudaMemcpyHostToDevice));
+
+    int threads = 256;
+    int blocks  = (int)((n + threads - 1) / threads);
+    if (blocks &gt; 65535) blocks = 65535;        // 更大的 N 交给 grid-stride
+    vecadd&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;(a, b, c, n);
+    CK(cudaGetLastError());                   // 启动阶段的错误
+    CK(cudaDeviceSynchronize());              // 执行阶段的错误
+
+    CK(cudaMemcpy(h, c, bytes, cudaMemcpyDeviceToHost));
+    printf("c[%zu] = %.1f\n", n - 1, h[n - 1]);   // 2 * (n-1)
+    cudaFree(a); cudaFree(b); cudaFree(c); std::free(h);
+    return 0;
+}</code></pre>
+<p>编译与运行：</p>
+<pre><code>nvcc -O3 -arch=native vecadd.cu -o vecadd &amp;&amp; ./vecadd</code></pre>
+<p>三处值得注意：<b>grid-stride 循环</b>让 grid 可以封顶，从而兼容任意 \(N\)；索引用 <code>size_t</code>，因为 \(2^{31}\) 个 float 就是 8 GiB，<code>int</code> 会溢出；<b>启动错误</b>和<b>执行错误</b>要分两次查，<code>cudaGetLastError()</code> 只能看到参数错误，越界和非法访存要等同步才报。</p>
+<p>同样的计算用 CPU 写，只差一行：</p>
+<p class="file">vecadd.cpp</p>
+<pre><code>#pragma omp parallel for
+for (size_t i = 0; i &lt; n; ++i)
+    c[i] = a[i] + b[i];</code></pre>
+<p>两段代码逐字对应，但执行模型完全不同：CPU 把循环的迭代分给 8–128 个线程，每个线程串行跑一大段；GPU 把同一个循环体发给几十万线程，每个线程只做很少几次迭代。<b>写 kernel 的本质是把循环拆成“索引 + 单元素操作”</b>，这一点在第 1 节会反复出现。</p>
+<p>最后算一笔时间账，它解释了为什么 GPU 不是万能的。16M 个 float 的向量加：读 \(a,b\) 写 \(c\)，共 192 MiB 流量，在 3.35 TB/s 下约 <b>60 µs</b>；但一次性把数据从主机搬过去再搬回来，同样 192 MiB 走 PCIe 4.0 x16（32 GB/s）要 <b>约 6 ms</b>——传输是计算的 100 倍。只有数据常驻显存、被反复使用时，GPU 的优势才存在。</p>
+
+<h2>0.6 和 CPU 一样的地方</h2>
+<ul>
+<li><b>浮点规则</b>：IEEE 754，单精度 24 位有效位、相对误差量级 \(10^{-7}\)；GPU 可以开启 FTZ 把非规格化数刷成 0（和 CPU 的默认行为可能不同，见 7.4）。</li>
+<li><b>整数与字节序</b>：补码、位运算、小端，与 x86/ARM 一致。</li>
+<li><b>C++ 语义与未定义行为</b>：数据竞争在两边都是 UB，不会因为“在 GPU 上”就变安全。</li>
+<li><b>局部性与 roofline</b>：先看数据复用，再谈优化；这些分析方法原样适用（第 5、7 节）。</li>
+<li><b>先测量再优化</b>：直觉在 GPU 上错得更离谱，profiler 更重要。</li>
+<li><b>优先用库</b>：cuBLAS / cuDNN / CUTLASS 对应 BLAS / MKL / 手写 SIMD；99% 的场景不该自己写 GEMM。</li>
+</ul>
+
+<h2>0.7 容易写错的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li>按“核心数 × 主频”线性外推性能。GPU 的实际瓶颈通常是带宽、占用率或 launch 开销，不是算力。</li>
+<li>忽略传输与启动开销，拿一个只跑一次的 kernel 去和 CPU 比。</li>
+<li>把标量代码逐行搬进 kernel：每个线程处理一小段、分支很多、访存跳跃，结果比 CPU 慢一个数量级。</li>
+<li>以为 GPU 单线程只是“慢一点”。实际上单线程延迟可能是 CPU 的 10–50 倍，串行段会直接决定总时间（Amdahl 定律在两边都成立，只是 GPU 的并行项大得多）。</li>
+</ul>
+</div>
+</article>
+</main>
+<footer>
+<p>为 <code>GPU 编程基础</code> 系列编写 · 公式使用本地 KaTeX 渲染，可离线阅读。</p>
+</footer>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

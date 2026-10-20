@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>3. 同步、原子与内存模型 · GPU 编程基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EG%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="03-sync.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">GPU 编程基础</a>
+</header>
+<main>
+<article>
+<h1 id="s3">3. 同步、原子与内存模型</h1>
+<p>CPU 程序员有三件套：mutex、条件变量、<code>std::atomic</code>。GPU 上只剩最后一件，而且语义更弱。这一节讲清楚 <code>__syncthreads()</code> 到底保证了什么、原子什么时候会变成瓶颈，以及为什么“跨 block 自旋等待”是个陷阱。</p>
+
+<h2>3.1 block 内的 barrier</h2>
+<p><code>__syncthreads()</code> 做两件事：<b>所有线程到达后才继续</b>，以及<b>此前的 shared/全局写对 block 内其他线程可见</b>。它相当于“barrier + block 范围的 fence”。</p>
+<p class="file">exchange.cu</p>
+<pre><code>__shared__ float s[256];
+int t = threadIdx.x;
+s[t] = x[i];
+__syncthreads();                 // 少这一行，读到的可能是旧值
+float left = s[(t + 255) &amp; 255]; // 取左邻居，边界回绕</code></pre>
+<p>两个硬性限制：</p>
+<ul>
+<li><b>只能同步 block 内。</b>不同 block 之间没有 barrier；<code>__syncthreads()</code> 不会让 block 1 等 block 0。</li>
+<li><b>必须在所有线程都到达的位置。</b>如果写在 <code>if (threadIdx.x &lt; 16) { … __syncthreads(); }</code> 里，有的 lane 到了、有的没到，行为是未定义（常见表现是挂死或结果随机）。条件必须<b>块内一致</b>。</li>
+</ul>
+<p>还有一个容易忽略的点：<code>__syncthreads()</code> 之后再次写同一块 shared 之前，往往需要<b>第二个</b> <code>__syncthreads()</code>——否则快线程可能把慢线程还没读的数据覆盖掉。归约、转置、双缓冲都踩过这个坑。</p>
+
+<h2>3.2 原子操作：能用，但要少用</h2>
+<p><code>atomicAdd</code>、<code>atomicSub</code>、<code>atomicMin/Max</code>、<code>atomicExch</code>、<code>atomicCAS</code>、按位与/或/异或，都返回<b>旧值</b>。它们是设备范围的，落在 L2 上完成。</p>
+<p class="file">count.cu</p>
+<pre><code>__global__ void count_positive(const float* x, int n, int* counter) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i &lt; n &amp;&amp; x[i] &gt; 0.0f)
+        atomicAdd(counter, 1);
+}</code></pre>
+<p>这段代码是对的，但很慢：如果数据里正数很多，所有 block 都在抢同一个地址，L2 上的一次原子要串行几十到几百个周期。正确做法是<b>先在 block 内归约，再让每个 block 做一次原子</b>（4.1）；或者用 shared 私有化（4.4）。</p>
+<div class="warn"><span class="tag">不要写自旋锁</span>
+<p>用 <code>atomicCAS</code> 可以实现一个“锁”，但 GPU 上没有调度器帮你把自旋的 warp 换下去——它仍然占着发射槽，还会拖慢同 SM 的其他 warp。更糟的是跨 block 的锁可能<b>永远拿不到</b>（持有者所在的 block 还没被调度）。需要互斥时，先问能不能改成“每个线程写自己的槽位，最后归约”。</p>
+</div>
+
+<h2>3.3 弱内存模型与 fence</h2>
+<p>GPU 的内存模型是<b>弱（relaxed）</b>的：没有 fence 时，编译器和硬件都可以重排你的读写。下面这段“发布数据”的代码，如果去掉 <code>__threadfence()</code>，其他 SM 可能先看到 <code>g_ready == 1</code>，再看到旧的 <code>*data</code>：</p>
+<p class="file">publish.cu</p>
+<pre><code>__device__ int g_ready = 0;
+
+__global__ void publish(float* data) {
+    if (blockIdx.x == 0 &amp;&amp; threadIdx.x == 0) {
+        *data = 1.0f;
+        __threadfence();            // 先把 data 的写推到设备可见
+        atomicExch(&amp;g_ready, 1);    // 再发布标志
+    }
+}</code></pre>
+<p>消费端的顺序相反：先读标志，再读数据，并且需要 acquire 语义。干净的写法是用 libcu++ 的显式内存序：</p>
+<pre><code>#include &lt;cuda/atomic&gt;
+
+cuda::atomic_ref&lt;int, cuda::thread_scope_device&gt; flag(g_ready);
+while (flag.load(cuda::memory_order_acquire) == 0) { }
+float v = *data;   // 现在能保证看到 publish 写入的值</code></pre>
+<p>三个 fence 的范围：<code>__threadfence_block()</code>（block 内）、<code>__threadfence()</code>（设备内）、<code>__threadfence_system()</code>（含主机）。它们只做排序，不做互斥。</p>
+<div class="key"><span class="tag">重要限制</span>
+<p><b>跨 block 自旋等待可能死锁。</b>硬件不保证所有 block 同时驻留；如果你等待的那个 block 还没被调度，而 SM 已经被“等待者”占满，就永远转不下去。需要全局同步时，用 cooperative groups 的 <code>grid.sync()</code>（要求 cooperative launch，并受常驻 block 数限制），或者干脆拆成两个 kernel。</p>
+</div>
+<p>这也是为什么“原子操作的结果不可复现”：<code>atomicAdd(float)</code> 的到达顺序由调度决定，浮点加法不满足结合律，每次运行的舍入都不同。CPU 多线程累加也有同样的问题，只是 GPU 上更容易暴露。</p>
+
+<h2>3.4 warp 级原语</h2>
+<p>warp 内的 32 个 lane 可以直接交换寄存器，不需要 shared memory，也不需要 <code>__syncthreads()</code>：</p>
+<pre><code>__inline__ __device__ float warpSum(float v) {
+    #pragma unroll
+    for (int off = 16; off &gt; 0; off &gt;&gt;= 1)
+        v += __shfl_down_sync(0xffffffffu, v, off);  // lane i 取 i+off 的值
+    return v;                                        // lane 0 得到总和
+}</code></pre>
+<p>常用的一组：</p>
+<div class="tablewrap"><table>
+<thead><tr><th>原语</th><th>作用</th></tr></thead>
+<tbody>
+<tr><td><code>__shfl_sync(mask, v, src)</code></td><td>读 lane <code>src</code> 的寄存器</td></tr>
+<tr><td><code>__shfl_down_sync(mask, v, d)</code></td><td>读 lane <code>i+d</code> 的值（归约常用）</td></tr>
+<tr><td><code>__shfl_up_sync(mask, v, d)</code></td><td>读 lane <code>i-d</code> 的值（扫描常用）</td></tr>
+<tr><td><code>__ballot_sync(mask, pred)</code></td><td>返回 32 位掩码，第 i 位是 lane i 的条件</td></tr>
+<tr><td><code>__any_sync</code> / <code>__all_sync</code></td><td>warp 内是否有 / 是否全都满足</td></tr>
+<tr><td><code>__popc</code> / <code>__ffs</code></td><td>数 1 的个数 / 找最低位的 1</td></tr>
+<tr><td><code>__syncwarp(mask)</code></td><td>warp 内重新汇合（Volta 之后需要显式写）</td></tr>
+</tbody></table></div>
+<p><code>mask</code> 必须是<b>当前活跃 lane 的集合</b>。标准写法是全 1，但那要求 32 个 lane 都在执行这条指令。如果 <code>blockDim.x</code> 不是 32 的倍数，最后一个 warp 只有部分 lane 活跃，全 1 的 mask 就是错的——这是 1.7 里提到的那个坑。</p>
+<pre><code>unsigned m = __ballot_sync(0xffffffffu, v &gt; 0.0f);
+int leader = __ffs(m) - 1;          // 最低位满足条件的 lane
+int npos  = __popc(m);              // 满足条件的 lane 数</code></pre>
+
+<h2>3.5 和 CPU 的对照</h2>
+<div class="tablewrap"><table class="cmp">
+<thead><tr><th>CPU</th><th>GPU</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>pthread_barrier</td><td><code>__syncthreads()</code></td><td>只作用于一个 block</td></tr>
+<tr><td>std::mutex</td><td>没有</td><td>用“私有化 + 归约”替代，不要自旋</td></tr>
+<tr><td>std::condition_variable</td><td>没有</td><td>用原子轮询也可以，但要保证对方能跑</td></tr>
+<tr><td>std::atomic&lt;int&gt;</td><td><code>atomicAdd</code> / <code>atomicCAS</code></td><td>GPU 的默认序是 relaxed</td></tr>
+<tr><td>std::memory_order</td><td><code>__threadfence</code> 或 <code>cuda::atomic_ref</code></td><td>三级范围：block / device / system</td></tr>
+<tr><td>thread_local</td><td>寄存器（溢出到 local memory）</td><td>local memory 在显存里，慢</td></tr>
+</tbody></table></div>
+
+<h2>3.6 容易写错的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li><b>以为 <code>__syncthreads()</code> 能同步 block 之间。</b>不能。跨 block 只能拆 kernel、用原子/fence，或 cooperative launch。</li>
+<li><b>把 <code>volatile</code> 当同步。</b>它只阻止编译器优化单次访存，不提供跨线程的顺序保证。</li>
+<li><b>写完 shared 只同步一次。</b>“写 → 同步 → 读 → 同步 → 再写”里的第二个同步经常被漏掉。</li>
+<li><b>在发散的分支里调用 <code>__syncthreads()</code>。</b>未定义行为，常见表现是挂死。</li>
+<li><b>用原子做“顺序”保证。</b>原子只保证单次操作的原子性，不保证其他访存的顺序，需要配套 fence。</li>
+<li><b>跨 block 自旋。</b>可能死锁；也不要依赖“block 0 一定先跑”。</li>
+<li><b>忘记原子浮点求和的非确定性。</b>需要可复现时，用固定的树形归约（4.1），不要用 <code>atomicAdd</code> 汇总。</li>
+</ul>
+</div>
+</article>
+</main>
+<footer>
+<p>为 <code>GPU 编程基础</code> 系列编写 · 公式使用本地 KaTeX 渲染，可离线阅读。</p>
+</footer>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

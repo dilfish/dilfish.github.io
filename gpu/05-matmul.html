@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>5. 矩阵乘：算术强度、分块与 Tensor Core · GPU 编程基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EG%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="05-matmul.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">GPU 编程基础</a>
+</header>
+<main>
+<article>
+<h1 id="s5">5. 矩阵乘：算术强度、分块与 Tensor Core</h1>
+<p>矩阵乘是 GPU 的“Hello World”，也是几乎所有深度学习算子的核心。这一节用 roofline 模型回答两个问题：<b>一个 kernel 应该受限于带宽还是算力</b>，以及<b>为什么朴素实现只有峰值的百分之几</b>。顺带说明 Tensor Core 带来了什么、代价是什么。</p>
+
+<h2>5.1 算术强度与 roofline</h2>
+<p>定义<b>算术强度</b>为每搬运一字节所做的浮点运算次数：</p>
+\[
+I=\frac{\text{FLOPs}}{\text{Bytes}} .
+\]
+<p>一台机器的峰值算力 \(P\)（FLOP/s）和带宽 \(BW\)（B/s）决定了模型上的一个“屋脊点”：</p>
+\[
+I^{*}=\frac{P}{BW},\qquad
+T=\max\left(\frac{\text{FLOPs}}{P},\ \frac{\text{Bytes}}{BW}\right).
+\]
+<p>当 \(I \lt I^{*}\)，任务<b>带宽受限</b>，优化方向是少读少写；当 \(I>I^{*}\)，任务<b>算力受限</b>，优化方向是提高指令效率。H100 的 FP32：\(I^{*}=67\times10^{12}/3.35\times10^{12}\approx20\) FLOP/B。若开 TF32 Tensor Core（495 TFLOPS），屋脊点升到约 148 FLOP/B——<b>同一份数据要复用更多次才配得上那么高的算力</b>。</p>
+<div class="tablewrap"><table>
+<thead><tr><th>操作</th><th>FLOPs</th><th>最少字节</th><th>\(I\)（FLOP/B）</th><th>受限类型</th></tr></thead>
+<tbody>
+<tr><td>向量加（\(N\)）</td><td>\(2N\)</td><td>\(12N\)</td><td class="num">0.17</td><td>带宽</td></tr>
+<tr><td>矩阵向量乘（\(M\times N\)）</td><td>\(2MN\)</td><td>\(4MN\)</td><td class="num">0.5</td><td>带宽</td></tr>
+<tr><td>方阵乘（\(N=1024\)）</td><td>\(2N^3\)</td><td>\(12N^2\)</td><td class="num">约 170</td><td>算力</td></tr>
+</tbody></table></div>
+<p>第一行和第三行差了一千倍——这就是为什么“大矩阵乘”是 GPU 的主场，而 decode 阶段的 GEMV 再快也只能跑在带宽上。这个 0.5 FLOP/B 和 <a href="../math/13-batching.html">批处理那一节</a> 里 \(B/2\) 的推导是同一件事。</p>
+
+<h2>5.2 朴素 GEMM 为什么慢</h2>
+<p>最直观的写法是“一个线程算一个输出元素”：</p>
+<pre><code>// C[i][j] = sum_k A[i][k] * B[k][j]
+float acc = 0.0f;
+for (int k = 0; k &lt; K; ++k)
+    acc += A[i * K + k] * B[k * N + j];
+C[i * N + j] = acc;</code></pre>
+<p>每个输出要读 \(2K\) 个元素，整个矩阵要读 \(2N^3\) 个——而数据只有 \(3N^2\) 个。同一个 \(A[i][k]\) 被 \(N\) 个线程重复读，<code>B[k][j]</code> 同理。<b>没有复用，算术强度只有 0.25 FLOP/B</b>，比屋脊点低两个数量级，时间几乎全花在等内存上。L1/L2 能救回一部分（相邻线程确实会命中同一行），但无法改变“每个线程独立读两整行”的结构。</p>
+
+<h2>5.3 shared memory 分块</h2>
+<p>把矩阵切成 \(T\times T\) 的小块，一个 block 负责算 \(C\) 的一个块。计算前先把 A、B 对应的两块搬进 shared，块内所有线程反复使用：</p>
+<p class="file">sgemm.cu</p>
+<pre><code>constexpr int T = 32;
+
+// C[M,N] = A[M,K] * B[K,N]；为简短，要求 M、N、K 都是 T 的倍数
+__global__ void sgemm32(const float* A, const float* B, float* C,
+                        int M, int N, int K) {
+    __shared__ float As[T][T];
+    __shared__ float Bs[T][T];
+
+    int row = blockIdx.y * T + threadIdx.y;
+    int col = blockIdx.x * T + threadIdx.x;
+    float acc = 0.0f;
+
+    for (int k0 = 0; k0 &lt; K; k0 += T) {
+        As[threadIdx.y][threadIdx.x] = A[row * K + k0 + threadIdx.x];
+        Bs[threadIdx.y][threadIdx.x] = B[(k0 + threadIdx.y) * N + col];
+        __syncthreads();
+
+        #pragma unroll
+        for (int k = 0; k &lt; T; ++k)
+            acc += As[threadIdx.y][k] * Bs[k][threadIdx.x];
+
+        __syncthreads();     // 下一轮覆盖 shared 前，所有人必须读完
+    }
+    C[row * N + col] = acc;
+}
+
+// host
+dim3 block(T, T);                       // 1024 线程
+dim3 grid(N / T, M / T);
+sgemm32&lt;&lt;&lt;grid, block&gt;&gt;&gt;(d_A, d_B, d_C, M, N, K);</code></pre>
+<p>复用率可以精确算出来。每个 block 在每一轮 \(k_0\) 搬运 \(2T^2\) 个 float（\(8T^2\) 字节），做 \(2T^3\) 次浮点运算，于是块内算术强度是</p>
+\[
+I_{\text{tile}}=\frac{2T^3}{4\cdot 2T^2}=\frac{T}{4}.
+\]
+<p>\(T=32\) 时只有 <b>8 FLOP/B</b>，仍然低于屋脊点 20——这个“教科书版本”其实还是带宽受限的。要把 \(I\) 提到 32，需要 \(T=128\) 的 block tile；再沿 K 方向切 32，shared 占用是 \(2\times128\times32\times4=32\) KB。同时还要让每个线程算多个输出，才能把数据复用拉满。真实的高性能 GEMM 就是这么一层层叠上去的。</p>
+<div class="key"><span class="tag">直觉</span>
+<p>分块的本质是<b>把“读全局内存”换成“读 shared”</b>。shared 的带宽是显存的十几倍，而且延迟只有 20–30 个周期。每多复用一次，就少一次全局读。</p>
+</div>
+
+<h2>5.4 寄存器分块与双缓冲</h2>
+<p>再往上一步是让每个线程算 \(8\times8\) 个输出。这样每个线程有 64 个累加器（寄存器），每一轮只需从 shared 读 8 个 A 元素和 8 个 B 元素，就能做 64 次 FMA：</p>
+\[
+\frac{64\ \text{FMA}}{16\ \text{shared 读}} = 4\ \text{FMA/读},
+\]
+<p>shared 访问被摊薄了 4 倍。配合 \(128\times128\) 的 block tile，DRAM 侧的算术强度升到约 32 FLOP/B，刚好越过屋脊点。</p>
+<p>“双缓冲”解决的是另一个问题：加载下一块数据和计算当前块之间的等待。典型做法是提前把下一块用异步拷贝（<code>cp.async</code>，sm_80+）发到另一块 shared buffer，计算完当前块后直接切换，隐藏掉加载延迟。这就是软件流水线。</p>
+
+<h2>5.5 Tensor Core 与 WMMA</h2>
+<p>Tensor Core 是专门的矩阵乘单元：一条指令完成 \(16\times16\times16\)（或更大）的乘加。它不改变 roofline 的形状，只是把 \(P\) 抬高了一个数量级：</p>
+<div class="tablewrap"><table>
+<thead><tr><th>精度</th><th>输入</th><th>累加</th><th>H100 峰值（约）</th></tr></thead>
+<tbody>
+<tr><td>FP32</td><td>FP32</td><td>FP32</td><td class="num">67 TFLOPS</td></tr>
+<tr><td>TF32</td><td>19 位（10 位尾数）</td><td>FP32</td><td class="num">495 TFLOPS</td></tr>
+<tr><td>BF16</td><td>8 位指数 + 7 位尾数</td><td>FP32</td><td class="num">989 TFLOPS</td></tr>
+<tr><td>FP16</td><td>5 位指数 + 10 位尾数</td><td>FP32</td><td class="num">989 TFLOPS</td></tr>
+</tbody></table></div>
+<p>用 WMMA（Warp Matrix Multiply-Accumulate）写一个块乘，一个 warp 负责一个 16×16 的输出块：</p>
+<p class="file">wmma.cu</p>
+<pre><code>#include &lt;cuda_fp16.h&gt;
+#include &lt;mma.h&gt;
+using namespace nvcuda;
+
+__global__ void wmma_gemm(const half* A, const half* B, float* C,
+                          int M, int N, int K) {
+    wmma::fragment&lt;wmma::matrix_a, 16, 16, 16, half, wmma::row_major&gt; a;
+    wmma::fragment&lt;wmma::matrix_b, 16, 16, 16, half, wmma::row_major&gt; b;
+    wmma::fragment&lt;wmma::accumulator, 16, 16, 16, float&gt; c;
+    wmma::fill_fragment(c, 0.0f);
+
+    int warp  = (blockIdx.x * blockDim.x + threadIdx.x) / 32;
+    int warpM = warp % (M / 16);          // 省略越界检查：要求 M、N 是 16 的倍数
+    int warpN = warp / (M / 16);
+
+    for (int k = 0; k &lt; K; k += 16) {
+        wmma::load_matrix_sync(a, A + warpM * 16 * K + k, K);
+        wmma::load_matrix_sync(b, B + k * N + warpN * 16, N);
+        wmma::mma_sync(c, a, b, c);
+    }
+    wmma::store_matrix_sync(C + warpM * 16 * N + warpN * 16, c,
+                            N, wmma::mem_row_major);
+}</code></pre>
+<p>用起来要注意三件事：</p>
+<ul>
+<li><b>对齐</b>：<code>load_matrix_sync</code> / <code>store_matrix_sync</code> 要求指针 32 B（256 位）对齐，leading dimension 也有倍数要求；不满足会直接崩或走慢路径。具体数值以当前 CUDA 文档为准。</li>
+<li><b>布局</b>：<code>row_major</code> / <code>col_major</code> 必须和内存里的真实布局一致，否则结果转置了还“看起来很像”。</li>
+<li><b>精度</b>：累加顺序、中间舍入都和 FP32 标量实现不同，相对误差在 \(10^{-4}\) 到 \(10^{-3}\) 量级是正常的；不要拿 \(10^{-6}\) 的容差去验收。</li>
+</ul>
+<p>再往下是 <code>mma.sync</code>（PTX）和 <code>wgmma</code>（Hopper），性能更高但完全手工管理 fragment 布局；生产环境直接用 CUTLASS 或 cuBLAS。</p>
+
+<h2>5.6 和 CPU 的对照</h2>
+<ul>
+<li><b>峰值</b>：CPU 用 AVX-512 + FMA 大约是每核每周期 32 FLOP，64 核约几 TFLOPS；GPU 单卡 FP32 是几十 TFLOPS，Tensor Core 再高一个数量级。</li>
+<li><b>实现</b>：CPU 上这活交给 BLAS（MKL/OpenBLAS），GPU 上交给 cuBLAS/CUTLASS；自己写 GEMM 只在教学或特殊布局时值得。</li>
+<li><b>小矩阵</b>：\(N \lt 128\) 时 CPU 往往更快，因为 kernel launch 和传输的开销占了大头。批量小、矩阵小，别急着上 GPU。</li>
+<li><b>GEMV</b>：两边都受带宽限制。GPU 的带宽是 CPU 的 5–10 倍，所以加速比也就是 5–10 倍，不会出现“百倍”。</li>
+</ul>
+
+<h2>5.7 容易写错的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li><b>tile 不整除时没有边界处理。</b>上面的 <code>sgemm32</code> 直接假设 \(M,N,K\) 是 32 的倍数；真实数据要加判断，或者把矩阵补齐。</li>
+<li><b>shared 的第二维没 padding。</b>本例的访问模式恰好无冲突，但换成按列读 <code>As[k][threadIdx.y]</code> 之类的写法就会 32 路冲突（2.4）。</li>
+<li><b>把 TF32 当无损。</b>10 位尾数对累计误差很敏感；需要高精度时用 FP32 或补偿求和。</li>
+<li><b>只测 kernel 不测传输。</b>一次 \(1024^3\) 的 GEMM 计算约 0.3 ms，传输可能更久。</li>
+<li><b>没有 warmup 就报数字。</b>第一次运行包含时钟爬升和 cache 冷启动，见 7.1。</li>
+<li><b>忘记 <code>__syncthreads()</code> 的第二次调用。</b>覆盖 shared 前必须等所有人读完，否则结果随机。</li>
+</ul>
+</div>
+</article>
+</main>
+<footer>
+<p>为 <code>GPU 编程基础</code> 系列编写 · 公式使用本地 KaTeX 渲染，可离线阅读。</p>
+</footer>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>GPU 编程基础：给 CPU 程序员的 GPU 教程</title>
+<meta name="description" content="从 CPU 思维迁移到 GPU：SIMT、warp、内存层级、合并访问、显式同步、矩阵乘、主机侧异步与性能测量，附短小的 CUDA 实例。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EG%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="index">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">GPU 编程基础</a>
+</header>
+<main>
+<article>
+<p class="crumb"><a href="../index.html">全部文档</a><span class="sep">/</span><span>系列目录</span></p>
+<h1>GPU 编程基础：给 CPU 程序员的 GPU 教程</h1>
+<div class="plainbox">
+<p>这一页写给这样的读者：<b>会 C/C++，知道线程、cache 和向量化是什么，但没系统写过 CUDA</b>。所以不假设你懂 warp、occupancy、bank conflict；每个概念第一次出现时都给定义、给数字量级，再给一段能编译的短代码。</p>
+<p>与 CPU 相同的部分只做速览：IEEE 浮点、补码、局部性、Amdahl、先测量再优化。重点放在真正不同的地方：<b>SIMT 与分支发散、显式内存层级与合并访问、显式同步与弱内存模型、主机/设备分离、异步错误、以及必须靠测量判断的性能</b>。</p>
+<p>代码用 CUDA C++，<code>nvcc -O3 -arch=native</code> 可编译，面向 sm_70 及以上。为了短，片段只保留核心逻辑；完整的 host 骨架与错误检查见第 6 节。文中的硬件数字以 H100 SXM（132 SM、3.35 TB/s、67 TFLOPS FP32）为参照，换卡后结论不变、常数要换。</p>
+</div>
+
+<h2>怎么读</h2>
+<ul>
+<li><b>第一次</b>：从第 0 节顺序读到第 7 节。每节先讲“和 CPU 哪里不一样”，再给代码，最后列“容易写错的地方”。</li>
+<li><b>只想知道差异</b>：0、1.2（warp 发散）、2.3（合并访问）、3.5（同步原语对照）、7.5（移植检查清单）。</li>
+<li><b>动手之前</b>：1.3 的启动配置 + 7.5 的检查清单，能避开大多数“能跑但很慢”。</li>
+<li><b>查 API / 公式</b>：附录 A 一页表格。</li>
+</ul>
+
+<h2>章节</h2>
+<ul class="index">
+<li><div class="row"><span class="n">0</span><a href="00-model.html">心智模型：吞吐机器与延迟机器</a></div>
+<p class="note">为什么 GPU 把面积花在并行而不是分支预测；三个直接后果；什么时候不该用 GPU；第一个可运行的向量加程序。</p></li>
+
+<li><div class="row"><span class="n">1</span><a href="01-execution.html">执行模型：warp、block、grid 与启动配置</a></div>
+<p class="note">三层线程结构；一个 warp 共享一条指令流，分支为什么会串行；启动配置取值；grid-stride 循环；占用率的快速估算。</p></li>
+
+<li><div class="row"><span class="n">2</span><a href="02-memory.html">内存层级：合并访问、shared memory 与 bank</a></div>
+<p class="note">寄存器 / shared / L1 / L2 / 显存的容量与延迟；Little 定律算“在途字节”；32B sector 与合并访问；bank conflict；转置实战。</p></li>
+
+<li><div class="row"><span class="n">3</span><a href="03-sync.html">同步、原子与内存模型</a></div>
+<p class="note"><code>__syncthreads</code> 的真实语义；原子操作与热点竞争；弱内存模型、fence 与发布-订阅；warp 级 shuffle / ballot；与 CPU 同步原语的对应表。</p></li>
+
+<li><div class="row"><span class="n">4</span><a href="04-patterns.html">并行模式：归约、扫描与模板计算</a></div>
+<p class="note">树形归约（shuffle 版）；Hillis-Steele 扫描；halo 与 stencil；直方图的私有化；从 work/span 看 GPU 为什么“多干活”。</p></li>
+
+<li><div class="row"><span class="n">5</span><a href="05-matmul.html">矩阵乘：算术强度、分块与 Tensor Core</a></div>
+<p class="note">roofline 模型与 ridge point；朴素 GEMM 的瓶颈；shared 分块与寄存器分块；WMMA / Tensor Core；fp16、bf16、tf32 的取舍。</p></li>
+
+<li><div class="row"><span class="n">6</span><a href="06-host.html">主机侧：拷贝、流、事件与多卡</a></div>
+<p class="note">cudaMalloc 与 cudaMemcpy 的真实成本；pinned memory 为什么必要；多流 overlap；事件计时；统一内存与多卡。</p></li>
+
+<li><div class="row"><span class="n">7</span><a href="07-perf.html">性能测量、数值与常见陷阱</a></div>
+<p class="note">正确的基准写法；三个性能极限；Nsight 看哪几个指标；浮点精度与确定性；一份移植检查清单。</p></li>
+
+<li><div class="row"><span class="n">A</span><a href="a-cheatsheet.html">附录 A. 速查表</a></div>
+<p class="note">公式、API、启动配置、症状与原因对照、术语表。</p></li>
+</ul>
+
+<h2>一张表看完 CPU 与 GPU 的差别</h2>
+<p>下面这张表是整份教程的提纲：每一行在后面的章节里都会展开。</p>
+<div class="tablewrap"><table class="cmp">
+<thead><tr><th>维度</th><th>CPU</th><th>GPU</th><th>直接后果</th></tr></thead>
+<tbody>
+<tr><td>优化目标</td><td>降低单线程延迟</td><td>提高总吞吐</td><td>GPU 单线程更慢，靠并行补回来</td></tr>
+<tr><td>并行单元</td><td>8–128 个重量级核，每核乱序执行 + SIMD</td><td>60–160 个 SM，上万条 lane</td><td>线程要十万级才喂得饱</td></tr>
+<tr><td>主频</td><td>2.5–5.5 GHz</td><td>1.0–2.5 GHz</td><td>串行段落在 GPU 上慢 10–50 倍</td></tr>
+<tr><td>分支</td><td>预测 + 推测执行</td><td>SIMT 掩码，路径串行</td><td>分支密集代码可能慢一倍以上</td></tr>
+<tr><td>缓存</td><td>硬件自动管理多级 cache</td><td>显式 shared memory + 弱一致 cache</td><td>数据复用要自己搬</td></tr>
+<tr><td>内存</td><td>统一地址空间，可换页、可超卖</td><td>独立显存，手动拷贝，不可超卖</td><td>传输可能吃掉全部收益</td></tr>
+<tr><td>同步</td><td>锁、条件变量、futex</td><td>barrier、原子、fence</td><td>没有 mutex，跨 block 同步很难</td></tr>
+<tr><td>启动开销</td><td>函数调用，纳秒级</td><td>kernel launch，约 5&nbsp;µs</td><td>小任务不要拆成多个 kernel</td></tr>
+<tr><td>错误模型</td><td>同步异常 / 信号</td><td>异步错误码，可能“粘住”</td><td>每个 API 都要查返回值</td></tr>
+<tr><td>抢占</td><td>时间片抢占</td><td>block 一旦开始通常跑完</td><td>长 kernel 会拖住整卡</td></tr>
+<tr><td>编程模型</td><td>共享内存 + 锁</td><td>SIMT + 显式数据搬运</td><td>移植不是换个 API 那么简单</td></tr>
+</tbody></table></div>
+
+<h2>符号与术语</h2>
+<div class="tablewrap"><table class="sym">
+<thead><tr><th>符号 / 术语</th><th>含义</th><th>本教程的取值</th></tr></thead>
+<tbody>
+<tr><td>warp</td><td>GPU 的调度单位，固定 32 个 lane</td><td>32</td></tr>
+<tr><td>SM</td><td>流多处理器，GPU 的基本计算单元</td><td>H100 有 132 个</td></tr>
+<tr><td>\(N\)</td><td>元素个数</td><td>—</td></tr>
+<tr><td>\(T\)</td><td>分块边长（tile size）</td><td>示例用 32</td></tr>
+<tr><td>\(P\)</td><td>峰值算力</td><td>\(67\times10^{12}\) FLOP/s（FP32）</td></tr>
+<tr><td>\(BW\)</td><td>内存带宽</td><td>\(3.35\times10^{12}\) B/s</td></tr>
+<tr><td>\(I\)</td><td>算术强度，每字节做多少次浮点运算</td><td>FLOP/byte</td></tr>
+<tr><td>occupancy</td><td>常驻 warp 数 / 硬件上限</td><td>0–100%</td></tr>
+</tbody></table></div>
+<p class="note">公式用本地 KaTeX 渲染；样式与 KaTeX 都在 <code>../assets</code> 下，断网也能看。如果要把 <code>gpu</code> 目录单独拷走，记得一并带上 <code>assets</code>，否则公式和排版会失效。</p>
+
+<footer>
+<p>为 <code>GPU 编程基础</code> 系列编写 · 8 篇正文 + 1 篇附录 · 公式使用本地 KaTeX 渲染，可离线阅读。</p>
+<p>配套阅读：<a href="../math/index.html">inferserver 的数学基础</a>（同一批公式的推导）、<a href="../README.md">README.md</a>（本站结构）。</p>
+</footer>
+</article>
+</main>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

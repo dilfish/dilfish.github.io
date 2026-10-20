@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>4. 线性层、参数量与计算量 · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="04-linear-layers.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s4">4. 线性层、参数量与计算量</h1>
+
+<h2>4.1 一次矩阵乘向量到底算了什么</h2>
+<p>线性层 \(y=Wx\)，\(W\in\mathbb{R}^{m\times n}\)，\(x\in\mathbb{R}^n\)。按 0.2 的定义，每个输出分量是一次长度为 \(n\) 的内积：\(n\) 次乘法、\(n-1\) 次加法，约 \(2n\) 次浮点运算（FLOP）。\(m\) 个输出就是约 \(2mn\) 次。</p>
+<p>所以“参数量”和“每 token 计算量”可以分开算：参数量是 \(mn\)，计算量是 \(2mn\) 每 token。矩阵乘矩阵 \(XW\)（\(B\) 个 token 一起）则是 \(2Bmn\)，<b>权重只读一次，被 \(B\) 个 token 复用</b>，这是 batching 提速的根源（<a href="13-batching.html">第 13 节</a>）。</p>
+
+<h2>4.2 Qwen3-0.6B 的账</h2>
+<p>本项目默认模型是 Qwen3-0.6B：\(h=1024\)、\(L=28\) 层、\(H=16\) 个 Q 头、\(H_{kv}=8\) 个 KV 头、\(d=128\)、中间层 \(3072\)、词表 \(V=151936\)。每层参数：</p>
+<div class="tablewrap"><table>
+<thead><tr><th>张量</th><th>形状</th><th class="num">参数</th></tr></thead>
+<tbody>
+<tr><td>q_proj</td><td>\(2048\times1024\)</td><td class="num">2,097,152</td></tr>
+<tr><td>k_proj</td><td>\(1024\times1024\)</td><td class="num">1,048,576</td></tr>
+<tr><td>v_proj</td><td>\(1024\times1024\)</td><td class="num">1,048,576</td></tr>
+<tr><td>o_proj</td><td>\(1024\times2048\)</td><td class="num">2,097,152</td></tr>
+<tr><td>gate_proj</td><td>\(3072\times1024\)</td><td class="num">3,145,728</td></tr>
+<tr><td>up_proj</td><td>\(3072\times1024\)</td><td class="num">3,145,728</td></tr>
+<tr><td>down_proj</td><td>\(1024\times3072\)</td><td class="num">3,145,728</td></tr>
+<tr><td>4 个 norm 的 \(\gamma\)</td><td>\(1024\) 每个</td><td class="num">4,096</td></tr>
+<tr><td><b>每层合计</b></td><td></td><td class="num"><b>15,732,736</b></td></tr>
+</tbody></table></div>
+<p>28 层：\(15{,}732{,}736\times28=440{,}516{,}608\)。embedding 是 \(151936\times1024=155{,}582{,}464\)，且 <code>tie_word_embeddings=true</code>，lm_head 与它共享，不重复计。总计</p>
+\[
+440{,}516{,}608+155{,}582{,}464=596{,}099{,}072\approx0.596\text{B}.
+\]
+<p>这就是“0.6B”的来历。用 float32 存：\(596{,}099{,}072\times4=2{,}384{,}396{,}288\) 字节 \(\approx2.22\) GiB，和 TODO 里“常驻 2.2 GB”一致；bf16 存储则约 1.19 GB（safetensors 文件 1.4 GB 左右，还含少量元数据和对齐）。</p>
+
+<h2>4.3 每 token 的 FLOP 估算</h2>
+<p>按 4.1 的 \(2mn\)：</p>
+<ul>
+<li>Q/K/V/O 投影：\(2(1024\cdot2048+1024\cdot1024+1024\cdot1024+2048\cdot1024)=12{,}582{,}912\)；</li>
+<li>MLP 三个矩阵：\(3\times2\times1024\times3072=18{,}874{,}368\)；</li>
+<li>每层合计约 \(31.46\) MFLOP；28 层约 \(0.881\) GFLOP；</li>
+<li>lm_head：\(2\times151936\times1024=311{,}164{,}928\approx0.311\) GFLOP。</li>
+</ul>
+<p>所以 decode 一个 token 约 \(1.19\) GFLOP（不含注意力随历史长度的部分）。作为对照，注意力在长度 \(T\) 时每层约 \(4HT^2d=8192T^2\) FLOP：\(T=1024\) 时约 8.6 GFLOP/层，远大于线性部分，这就是长上下文 prefill 昂贵的原因。</p>
+
+<h2>4.4 embedding 是“one-hot 矩阵乘”</h2>
+<p>查表 <code>E[id]</code> 可以看成：构造 one-hot 向量 \(e_{id}\)（只有第 id 位是 1），再算 \(E^\top e_{id}\)。矩阵乘的结果正好取出第 id 行。这样想的好处是：反向传播时梯度是“把梯度写到对应行”，而不是真的乘一个巨大的单位矩阵。</p>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

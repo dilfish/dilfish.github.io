@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>2. 内存层级：合并访问、shared memory 与 bank · GPU 编程基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EG%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="02-memory.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">GPU 编程基础</a>
+</header>
+<main>
+<article>
+<h1 id="s2">2. 内存层级：合并访问、shared memory 与 bank</h1>
+<p>这是 GPU 与 CPU 差别最大的一章。CPU 上“写个循环，剩下的交给 cache”，在 GPU 上通常只能拿到峰值带宽的 10%–20%。原因有两个：<b>访问模式要按 warp 对齐</b>，以及<b>shared memory 需要你自己搬</b>。</p>
+
+<h2>2.1 五层存储</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>层级</th><th>典型容量</th><th>延迟（约）</th><th>带宽 / 作用域</th><th>谁管理</th></tr></thead>
+<tbody>
+<tr><td>寄存器</td><td>每线程最多 255 个 32-bit</td><td class="num">1 cycle</td><td class="num">极高</td><td>编译器</td></tr>
+<tr><td>shared memory</td><td>每 SM 48–227 KB</td><td class="num">20–30 cycles</td><td class="num">每 SM 数 TB/s</td><td>程序员显式</td></tr>
+<tr><td>L1 / 纹理缓存</td><td>与 shared 共用物理存储</td><td class="num">30 cycles</td><td class="num">每 SM</td><td>硬件</td></tr>
+<tr><td>L2</td><td>40–72 MB</td><td class="num">约 200 cycles</td><td class="num">全卡共享</td><td>硬件</td></tr>
+<tr><td>显存（HBM/GDDR）</td><td>16–80 GB</td><td class="num">400–800 cycles（约 500 ns）</td><td class="num">1–3.35 TB/s</td><td><code>cudaMalloc</code></td></tr>
+<tr><td>主机内存</td><td>系统内存</td><td class="num">数 µs（PCIe）</td><td class="num">32–64 GB/s</td><td>操作系统</td></tr>
+</tbody></table></div>
+<p>关键区别不在“快慢”，而在<b>谁负责搬运</b>。CPU 的 cache 对程序透明：你访问一次，硬件自动把整条 cache line 拉进来，下次命中就快。GPU 的 shared memory 是<b>每个 block 独占的 scratchpad</b>：容量固定、生命周期等于 block、必须用 <code>__syncthreads()</code> 协调读写。硬件不会自动把你要用的数据放进去，你要自己写加载代码。</p>
+<p>L1 和 shared 在物理上是同一块存储，按 kernel 的需求划分（carveout）。所以“shared 用得越多，L1 越小”，两者不能同时吃满。</p>
+
+<h2>2.2 在途字节：为什么 100% 占用率也可能跑不满带宽</h2>
+<p>回到 0.3 的 Little 定律。要跑满带宽，任意时刻都要有</p>
+\[
+N_{\text{inflight}} = BW \times t_{\text{lat}}
+\]
+<p>字节的请求在路上。H100 上约 2 MB；除以 132 个 SM，每个 SM 要维持约 15 KB 的在途数据。</p>
+<ul>
+<li>一个 warp 用 <code>float</code> 读：一次 128 B → 需要约 <b>119 个 warp</b> 同时等，超过每 SM 64 个的上限。</li>
+<li>用 <code>float4</code> 读：一次 512 B → 只需要 <b>30 个 warp</b>，在 64 个的限制内。</li>
+<li>每个线程发两个独立的 <code>float4</code> 请求（ILP）：再减半。</li>
+</ul>
+<p>这就是“占用率明明 100%，带宽只有 40%”的最常见原因：<b>每条访存指令携带的字节数太少</b>，或者编译器把独立请求串行化了。先看字节/指令，再看占用率。</p>
+
+<h2>2.3 合并访问：一个 warp 的 32 个地址怎么变成事务</h2>
+<p>显存的读写以 <b>32 B 的 sector</b> 为最小单位，L2 line 是 128 B。一个 warp 的 32 个 lane 同时发出地址，硬件把它们按 sector 归并：</p>
+<ul>
+<li><b>连续</b>：32 个 lane 读连续的 32 个 <code>float</code>，覆盖 128 B = 4 个 sector，全部有用 → 1 组事务。这是理想情况。</li>
+<li><b>跨步 32</b>：地址相差 128 B，每个 lane 落在不同 sector，搬回 32 × 32 B = 1 KB，只用了 128 B → <b>8 倍浪费</b>。</li>
+<li><b>结构体数组（AoS）</b>：每个元素 16 B，只读其中一个字段，仍然搬 16 B → 4 倍浪费。</li>
+</ul>
+<p class="file">coalesce.cu</p>
+<pre><code>// 好：一个 warp 覆盖 128 B 连续地址
+out[i] = in[i];
+
+// 坏：一个 warp 跨 4 KiB
+out[i] = in[i * 32];
+
+// 好：每个 lane 一次搬 16 B（要求 16 B 对齐，且 n 是 4 的倍数）
+float4 v = *reinterpret_cast&lt;const float4*&gt;(in + 4 * i);
+float4 r;
+r.x = v.x * 2.f; r.y = v.y * 2.f; r.z = v.z * 2.f; r.w = v.w * 2.f;
+*reinterpret_cast&lt;float4*&gt;(out + 4 * i) = r;</code></pre>
+<p>如果数据本来就是“每个元素多个字段”，优先改成结构体数组（SoA）：</p>
+<pre><code>// AoS：读 x 时每个 lane 拉 16 B，只用 4 B
+struct Particle { float x, y, z, w; };
+Particle* p;
+
+// SoA：三个独立数组，读 x 完全合并
+float *px, *py, *pz, *pw;</code></pre>
+<div class="key"><span class="tag">判断方法</span>
+<p>问自己：<b>同一个 warp 的 32 个 lane，在一次访存里覆盖多少字节？</b>理想值是 128 B（<code>float</code>）或 512 B（<code>float4</code>）。如果每个 lane 各走各的 128 B，有效带宽就掉到 1/8。</p>
+</div>
+
+<h2>2.4 shared memory 与 bank conflict</h2>
+<p>shared memory 被划分成 <b>32 个 bank</b>，每个 bank 宽 4 B。一次访问中，如果 warp 的 32 个地址落在 32 个不同 bank 上，就能一次完成；如果多个 lane 落在同一个 bank 的<b>不同地址</b>，就串行化（n-way conflict）；如果落在<b>同一地址</b>，则是广播，不冲突。</p>
+<p>bank 编号就是字地址对 32 取模：</p>
+\[
+\text{bank}(i) = i \bmod 32 .
+\]
+<p>于是 <code>float tile[32][32]</code> 有一个经典陷阱：按列访问时，元素 <code>tile[0][c]</code>、<code>tile[1][c]</code>…的地址相差 32 个字，<b>全部落在同一个 bank</b> → 32 路冲突，慢 32 倍。把第二维加 1：</p>
+<pre><code>__shared__ float tile[32][33];   // 每行多一个填充字
+// bank(tile[r][c]) = (33r + c) mod 32 = (r + c) mod 32
+// 连续变化的 r 或 c 都会落到不同的 bank</code></pre>
+<p>填充一个 <code>float</code> 只多花 128 B，却能消掉整个冲突。这是 GPU 上最划算的优化之一。</p>
+
+<h2>2.5 实战：矩阵转置</h2>
+<p>转置是“读合并、写就必然不合并”的典型。朴素写法让一个方向完美、另一个方向完全散开：</p>
+<p class="file">transpose.cu</p>
+<pre><code>constexpr int T = 32;
+
+// 朴素：读合并（x 连续），写跨 rows 个元素 → 不合并
+__global__ void transpose_naive(const float* in, float* out, int rows, int cols) {
+    int x = blockIdx.x * T + threadIdx.x;   // 输入列
+    int y = blockIdx.y * T + threadIdx.y;   // 输入行
+    if (x &lt; cols &amp;&amp; y &lt; rows)
+        out[x * rows + y] = in[y * cols + x];
+}
+
+// 分块：全局读写都合并，转置在 shared 里完成
+__global__ void transpose_tiled(const float* in, float* out, int rows, int cols) {
+    __shared__ float tile[T][T + 1];        // +1 消除 bank conflict
+
+    int x = blockIdx.x * T + threadIdx.x;
+    int y = blockIdx.y * T + threadIdx.y;
+    if (x &lt; cols &amp;&amp; y &lt; rows)
+        tile[threadIdx.y][threadIdx.x] = in[y * cols + x];
+    __syncthreads();
+
+    int row = blockIdx.x * T + threadIdx.y; // 输出行 = 输入列
+    int col = blockIdx.y * T + threadIdx.x; // 输出列 = 输入行
+    if (row &lt; cols &amp;&amp; col &lt; rows)
+        out[row * rows + col] = tile[threadIdx.x][threadIdx.y];
+}</code></pre>
+<p>账很容易算：转置的流量是读 4 B + 写 4 B = 8 B/元素。1 GB 数据就是 8 GB 流量，在 3.35 TB/s 下约 2.4 ms。朴素版的写端每次浪费 8 倍 sector，读端正常，所以总时间大约是理想值的 4–5 倍；分块版把浪费消掉，代价只是 4 KB 的 shared 和一次 barrier。</p>
+<p>顺便注意：<code>transpose_tiled</code> 的读端仍然是一个 warp 读连续 32 个 <code>float</code>（因为 <code>threadIdx.x</code> 最快变化），写端也是。转置的“不连续”被关在了 shared memory 里，而 shared 的随机访问代价只有 bank conflict，没有 sector 浪费。</p>
+
+<h2>2.6 只读数据与向量化</h2>
+<p>只读的输入加上 <code>const __restrict__</code>，编译器才会放心走只读缓存（LDG），不会因为“可能和输出别名”而插入额外同步：</p>
+<pre><code>__global__ void axpy(float* __restrict__ y,
+                     const float* __restrict__ x, float a, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i &lt; n) y[i] = a * x[i] + y[i];
+}</code></pre>
+<p>L2 是全卡共享的，跨 block 的复用发生在 L2。矩阵乘里 A、B 被不同 block 反复读，靠的就是 L2 命中；再往上才是 shared 的 block 内复用（第 5 节）。</p>
+
+<h2>2.7 和 CPU 的对照</h2>
+<ul>
+<li><b>缓存管理</b>：CPU 自动；GPU 的 shared 要手写加载/同步，且只活在一个 block 内。</li>
+<li><b>最小粒度</b>：CPU cache line 64 B；GPU sector 32 B、L2 line 128 B。跨步访问在两边都亏，但 GPU 的惩罚更直接（按 sector 计费）。</li>
+<li><b>隐藏延迟</b>：CPU 靠乱序执行 + 硬件预取；GPU 靠大量 warp 轮换 + ILP，没有预取器。</li>
+<li><b>一致性</b>：CPU 多核有缓存一致性协议；GPU 的 L1 不跨 SM 一致，跨 block 通信必须用原子或 fence（3.3）。</li>
+<li><b>分配</b>：<code>malloc</code> 便宜、可超卖、可换页；<code>cudaMalloc</code> 同步且慢（驱动要建页表映射），显存不可超卖，OOM 是硬失败。</li>
+</ul>
+
+<h2>2.8 容易写错的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li><b>写了 shared 却忘了 <code>__syncthreads()</code>。</b>读到的可能是别的 lane 还没写入的旧值，而且不一定每次都错。</li>
+<li><b>以为 shared 会跨 block 保留。</b>它的生命周期等于 block；下一个 block 拿到的可能是任意残留数据。</li>
+<li><b>越界写不会报错。</b>GPU 上没有数组边界检查，可能静默改坏别的数据，也可能让整个 kernel 崩掉；用 <code>compute-sanitizer</code> 查。</li>
+<li><b><code>float4</code> 没对齐。</b>要求地址是 16 B 的倍数，否则行为未定义或性能骤降。</li>
+<li><b>只优化读，不看写。</b>转置、直方图、稀疏 scatter 的瓶颈常常在写端。</li>
+<li><b>shared 开太大。</b>每 block 超过 48 KB 需要 <code>cudaFuncSetAttribute</code>，否则 launch 直接失败；同时会把占用率压下去。</li>
+</ul>
+</div>
+</article>
+</main>
+<footer>
+<p>为 <code>GPU 编程基础</code> 系列编写 · 公式使用本地 KaTeX 渲染，可离线阅读。</p>
+</footer>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

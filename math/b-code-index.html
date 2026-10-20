@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>附录 B. 数学 ↔ 代码索引 · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="b-code-index.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="sb">附录 B. 数学 ↔ 代码索引</h1>
+<div class="tablewrap"><table>
+<thead><tr><th>数学概念</th><th>文件与函数</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>内积 / 矩阵乘向量</td><td><code>model/tensor.go</code> <code>MatVec</code></td><td>\(y=Wx\)，W 为 \([out,in]\)</td></tr>
+<tr><td>softmax</td><td><code>model/tensor.go</code> <code>Softmax</code></td><td>减最大值；全 \(-\infty\) 返回全 0</td></tr>
+<tr><td>log-softmax</td><td><code>model/sample.go</code> <code>LogSoftmax32</code> / <code>LogProbAt</code></td><td>原始分布，不含温度/截断</td></tr>
+<tr><td>交叉熵/困惑度</td><td>无运行时实现</td><td>训练侧概念；推理只算 logprobs</td></tr>
+<tr><td>RMSNorm</td><td><code>model/norm.go</code> <code>RMSNorm</code></td><td>eps 在根号内，\(\gamma\) 直接乘</td></tr>
+<tr><td>per-head QK-Norm</td><td><code>model/attn.go</code> <code>headRMSNorm</code></td><td>逐头归一化，且在 RoPE 之前</td></tr>
+<tr><td>SiLU / SwiGLU</td><td><code>model/tensor.go</code> <code>SiLU</code>，<code>model/mlp.go</code> <code>MLP</code></td><td>门控逐元素乘</td></tr>
+<tr><td>残差 / pre-norm</td><td><code>model/block.go</code> <code>Layer.ForwardWith</code></td><td>两条残差，均加在归一化前的 h 上</td></tr>
+<tr><td>缩放点积注意力</td><td><code>model/attn.go</code> <code>Attention</code></td><td>因果掩码用 \(-\infty\)</td></tr>
+<tr><td>RoPE</td><td><code>model/rope.go</code> <code>ApplyRoPE</code></td><td>劈半配对，只作用于 Q/K</td></tr>
+<tr><td>GQA</td><td><code>model/config.go</code> <code>KVGroupSize</code>；<code>attn.go</code></td><td>Q 头 h 用 KV 头 \(h/G\)</td></tr>
+<tr><td>KV cache</td><td><code>model/kv.go</code> <code>NaiveKV</code> / <code>CacheKV</code></td><td>增量 append</td></tr>
+<tr><td>分页 KV</td><td><code>model/pagedkv.go</code> <code>BlockManager</code> / <code>PagedKV</code></td><td>块表 + 引用计数 + COW</td></tr>
+<tr><td>online softmax</td><td><code>model/pagedattn.go</code> <code>attentionPaged</code></td><td>跨块合并，stage B</td></tr>
+<tr><td>采样</td><td><code>model/sample.go</code> <code>Sample</code> / <code>SampleLogits</code></td><td>温度→top-k→softmax→top-p→逆变换</td></tr>
+<tr><td>批处理 / chunked prefill</td><td><code>cmd/server/scheduler.go</code>，<code>model/batchstep.go</code></td><td>token 预算、左 padding、绝对位置</td></tr>
+</tbody></table></div>
+
+<h2>结语：一条完整的公式链</h2>
+<p>把这一页浓缩成一次前向：</p>
+\[
+\begin{aligned}
+x_0&=\text{embed}[t],\\
+h&=x_0,\\
+x&=\frac{h}{\operatorname{RMS}(h)}\gamma_1,\\
+q&=R(p)\,W_qx,\quad k=R(p)\,W_kx,\quad v=W_vx,\\
+\alpha&=\operatorname{softmax}\left(\frac{qK^\top}{\sqrt d}+M\right),\\
+h&\leftarrow h+W_o\left(\alpha V\right),\\
+h&\leftarrow h+W_d\Big(\operatorname{SiLU}(W_g\operatorname{RMS}(h)\gamma_2)\odot W_u\operatorname{RMS}(h)\gamma_2\Big),\\
+\text{logits}&=W_{\text{lm}}\operatorname{RMS}(h)\gamma_f,\\
+p&=\operatorname{softmax}(\text{logits}/T),\\
+t'&\sim p\ \text{（top-k / top-p 截断后）}.
+\end{aligned}
+\]
+<p>每一步为什么长这样，都能在上面对应的小节里找到推导。真正容易出错的通常不是公式本身，而是<b>下标、顺序、归一化范围、绝对位置</b>这四类约定；每个小节的“常见坑”都是仓库里实际踩过的。</p>
+
+<footer>
+<p>为 <code>inferserver</code> 编写 · 公式使用本地 KaTeX 渲染（<code>assets/katex</code>），可离线打开。</p>
+<p>配套阅读：<a href="../gpu/index.html">GPU 编程基础</a>（同一批概念的硬件视角）；<code>inferserver</code> 侧的 README、FORWARD.md、DESIGN_BATCHING.md 与代码一一对应。</p>
+</footer>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

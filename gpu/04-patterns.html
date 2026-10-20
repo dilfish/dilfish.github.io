@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>4. 并行模式：归约、扫描与模板计算 · GPU 编程基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EG%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="04-patterns.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">GPU 编程基础</a>
+</header>
+<main>
+<article>
+<h1 id="s4">4. 并行模式：归约、扫描与模板计算</h1>
+<p>前一章讲“怎么把数据搬对”，这一章讲“怎么把算法摆成 GPU 的形状”。核心思想只有一句：<b>把串行的累加改成树形，把跨线程的依赖换成每一层同时完成</b>。代价是总工作量变大、结果不再逐位可复现。</p>
+
+<h2>4.1 归约：从 O(n) 步到 O(log n) 步</h2>
+<p>串行求和需要 \(n-1\) 次加法、\(n-1\) 步。树形求和的第一层让 \(n/2\) 对元素同时相加，第二层 \(n/4\) 对，依此类推，总共仍是 \(n-1\) 次加法（<b>工作量不变</b>），但<b>关键路径长度</b>从 \(n\) 降到 \(\log_2 n\)。GPU 有几千个并行单元，正好把这个深度摊开。</p>
+<p>一个 block 内可以完全用寄存器 + shuffle 完成，不碰 shared：</p>
+<p class="file">reduce.cu</p>
+<pre><code>__inline__ __device__ float warpReduce(float v) {
+    #pragma unroll
+    for (int off = 16; off &gt; 0; off &gt;&gt;= 1)
+        v += __shfl_down_sync(0xffffffffu, v, off);
+    return v;                                  // lane 0 拿到整个 warp 的和
+}
+
+__global__ void blockSum(const float* x, float* out, int n) {
+    __shared__ float partial[32];              // 每 block 最多 32 个 warp
+    int tid = threadIdx.x;
+
+    float v = 0.0f;
+    for (int i = blockIdx.x * blockDim.x + tid; i &lt; n; i += blockDim.x * gridDim.x)
+        v += x[i];                             // 先做串行部分，尽量少用 shuffle
+
+    v = warpReduce(v);
+    if ((tid &amp; 31) == 0) partial[tid &gt;&gt; 5] = v;
+    __syncthreads();
+
+    if (tid &lt; 32) {
+        int nwarps = blockDim.x &gt;&gt; 5;          // 这里假设 blockDim 是 32 的倍数
+        v = (tid &lt; nwarps) ? partial[tid] : 0.0f;
+        v = warpReduce(v);
+        if (tid == 0) atomicAdd(out, v);       // 每个 block 一次原子
+    }
+}</code></pre>
+<p>三个设计点：</p>
+<ul>
+<li><b>先串行、后并行。</b>每个线程在 grid-stride 循环里已经把多次加法做掉了，shuffle 只处理“每个线程一个值”的最后一层。反过来（每个元素都 shuffle）会浪费指令。</li>
+<li><b>两级归约。</b>warp 内用 shuffle，warp 之间用 shared。这是 GPU 归约的标准骨架。</li>
+<li><b>跨 block 汇总。</b><code>atomicAdd</code> 最简单，但顺序不定、结果不可复现。要确定性就写两阶段：kernel 1 把每个 block 的部分和写进数组，kernel 2 再归约那几千个数。</li>
+</ul>
+<div class="note">
+<p>上一版代码里 <code>atomicAdd</code> 的浮点结果每次都可能差几个 ULP，因为 block 的完成顺序由调度决定。这和 CPU 上多线程累加的问题一模一样；需要复现实验时，用固定的两阶段版本，或改用 double/Kahan 累加。</p>
+</div>
+
+<h2>4.2 扫描：每个位置都要前缀和</h2>
+<p>给定 \(x_0,\dots,x_{n-1}\)，扫描要输出</p>
+\[
+y_i = \sum_{j=0}^{i} x_j .
+\]
+<p>串行是 \(n\) 步。Hillis-Steele 的并行版本在每一轮让每个位置加上它前面 \(2^{d}\) 个位置的当前值：</p>
+<p class="file">scan.cu</p>
+<pre><code>// 单 block，要求 blockDim.x == n，动态 shared 传入 n 个 float
+__global__ void scan(float* x, int n) {
+    extern __shared__ float s[];
+    int t = threadIdx.x;
+    s[t] = (t &lt; n) ? x[t] : 0.0f;
+    __syncthreads();
+
+    for (int off = 1; off &lt; n; off &lt;&lt;= 1) {
+        float add = (t &gt;= off) ? s[t - off] : 0.0f;
+        __syncthreads();          // 先让所有人读完上一轮
+        s[t] += add;
+        __syncthreads();          // 再让所有人写完，供下一轮读
+    }
+
+    if (t &lt; n) x[t] = s[t];
+}</code></pre>
+<p>启动：<code>scan&lt;&lt;&lt;1, n, n * sizeof(float)&gt;&gt;&gt;(d_x, n)</code>。复杂度是 \(O(n\log n)\) 次加法——比串行多做了 \(\log n\) 倍的工作，但深度只有 \(\log n\)。GPU 的并行度高，这个交换通常是划算的。Blelloch 的上行/下行两趟可以把工作量降回 \(O(n)\)，代价是常数更大、实现更绕；生产代码直接用 CUB 的 <code>DeviceScan</code>。</p>
+<p>扫描是很多算法的地基：stream compaction（把满足条件的元素挤到前面）、稀疏矩阵组装、排序的基数排序阶段，都要它。</p>
+
+<h2>4.3 模板计算：halo 与 shared</h2>
+<p>一维卷积、差分、平滑都属于 stencil：每个输出依赖输入的一个邻域。把邻域搬进 shared，一次加载、多次复用：</p>
+<p class="file">blur.cu</p>
+<pre><code>constexpr int R = 4;                       // 半径，窗口 2R+1
+
+__global__ void blur1d(const float* in, float* out, int n) {
+    extern __shared__ float s[];           // 大小 = blockDim.x + 2R
+    int base = blockIdx.x * blockDim.x;
+
+    for (int j = threadIdx.x; j &lt; blockDim.x + 2 * R; j += blockDim.x) {
+        int g = base - R + j;              // 带 halo 的全局下标
+        s[j] = (g &gt;= 0 &amp;&amp; g &lt; n) ? in[g] : 0.0f;
+    }
+    __syncthreads();
+
+    int g = base + threadIdx.x;
+    if (g &lt; n) {
+        float acc = 0.0f;
+        #pragma unroll
+        for (int k = -R; k &lt;= R; ++k) acc += s[threadIdx.x + R + k];
+        out[g] = acc / (2 * R + 1);
+    }
+}</code></pre>
+<p>边界处理是这类 kernel 的主要工作量：halo 超出数组时补 0、复制边缘或跳过。二维 stencil 的复用率更高——每个 block 加载 \((T+2R)^2\) 个元素，服务 \(T^2\) 个输出，算术强度随 \(T\) 线性增长。</p>
+
+<h2>4.4 直方图：原子冲突与私有化</h2>
+<p>最直接的直方图是每个元素对全局数组做一次 <code>atomicAdd</code>。256 个 bin、几百万个元素时，热点地址会被反复争用。标准解法是“每个 block 一份 shared 副本，最后合并”：</p>
+<p class="file">hist.cu</p>
+<pre><code>__global__ void histogram(const unsigned char* data, int n, unsigned int* hist) {
+    __shared__ unsigned int local[256];
+    for (int i = threadIdx.x; i &lt; 256; i += blockDim.x) local[i] = 0;
+    __syncthreads();
+
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i &lt; n; i += blockDim.x * gridDim.x)
+        atomicAdd(&amp;local[data[i]], 1u);        // 打在 shared 上，不抢全局
+    __syncthreads();
+
+    for (int i = threadIdx.x; i &lt; 256; i += blockDim.x)
+        if (local[i]) atomicAdd(&amp;hist[i], local[i]);
+}</code></pre>
+<p>shared 上的原子仍然会在“多个 lane 命中同一个 bin”时串行化，但比全局原子便宜一个数量级，而且冲突被限制在一个 block 内。如果数据分布非常集中（比如 90% 都是 0），可以再复制几份 <code>local[K][256]</code>，按 <code>threadIdx.x % K</code> 选副本，最后合并，用空间换冲突。</p>
+<p>注意 <code>hist</code> 必须在 host 侧清零（<code>cudaMemset</code>），kernel 只做累加。</p>
+
+<h2>4.5 work / span：为什么 GPU 愿意“多干活”</h2>
+<p>并行算法的两个量：<b>work</b> \(W\) 是总操作数，<b>span</b> \(S\) 是关键路径长度。用 \(p\) 个执行单元时，下界是</p>
+\[
+T_p \;\ge\; \max\left(\frac{W}{p},\; S\right).
+\]
+<p>CPU 上 \(p\) 小（几十），所以优化 \(W/p\) 更重要；GPU 上 \(p\) 大（几万），\(W/p\) 很快降到 1 以下，<b>span 变成瓶颈</b>。这解释了为什么 Hillis-Steele 扫描（\(W=O(n\log n)\)）在 GPU 上仍然常用：它把 span 压到 \(O(\log n)\)，而多出来的工作量被几千个 lane 摊掉了。</p>
+<div class="tablewrap"><table>
+<thead><tr><th>模式</th><th>串行 work / span</th><th>并行 work / span</th><th>GPU 上的库</th></tr></thead>
+<tbody>
+<tr><td>归约</td><td>\(n\) / \(n\)</td><td>\(n\) / \(\log n\)</td><td>CUB <code>DeviceReduce</code>、thrust::reduce</td></tr>
+<tr><td>扫描</td><td>\(n\) / \(n\)</td><td>\(n\log n\) / \(\log n\)</td><td>CUB <code>DeviceScan</code></td></tr>
+<tr><td>排序</td><td>\(n\log n\) / \(n\log n\)</td><td>— / \(O(\log^2 n)\)</td><td>CUB <code>DeviceRadixSort</code></td></tr>
+<tr><td>直方图</td><td>\(n\) / \(n\)</td><td>\(n\) / \(1\)（带原子）</td><td>—</td></tr>
+</tbody></table></div>
+
+<h2>4.6 容易写错的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li><b>shuffle 的 mask 写死全 1。</b>最后一个 warp 只有部分 lane 活跃时，结果是未定义；按 <code>__ballot_sync</code> 或实际 blockDim 计算 mask。</li>
+<li><b>假设 <code>blockDim.x</code> 是 32 的倍数。</b>归约里 <code>nwarps = blockDim.x &gt;&gt; 5</code>、<code>partial[tid &gt;&gt; 5]</code> 都依赖这个假设。</li>
+<li><b>忘记处理尾块。</b>grid-stride 循环能兜住 \(n\) 不是 block 整数倍的情况，但 stencil 的 halo 和扫描的 <code>t &lt; n</code> 仍要单独判。</li>
+<li><b>归约的初值写错。</b>求和初值 0、求 max 初值 <code>-INFINITY</code>，不要把“线程没数据”当成 0 参与 max。</li>
+<li><b>用原子汇总浮点后要求逐位复现。</b>顺序不定，结果不定；要复现就固定树形结构。</li>
+<li><b>shared 大小按“每线程一个”估。</b>归约的第二级只需要 32 个 float；histogram 需要 256 个 bin × 副本数。</li>
+</ul>
+</div>
+</article>
+</main>
+<footer>
+<p>为 <code>GPU 编程基础</code> 系列编写 · 公式使用本地 KaTeX 渲染，可离线阅读。</p>
+</footer>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

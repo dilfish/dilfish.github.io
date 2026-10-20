@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>6. 残差连接与 pre-norm · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="06-residual-prenorm.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s6">6. 残差连接与 pre-norm</h1>
+
+<h2>6.1 残差为什么能救深层网络</h2>
+<p>一个残差块写成</p>
+\[
+y=x+F(x).
+\]
+<p>假设损失为 \(\mathcal{L}\)，由链式法则</p>
+\[
+\frac{\partial\mathcal{L}}{\partial x}
+=\frac{\partial\mathcal{L}}{\partial y}\frac{\partial y}{\partial x}
+=\frac{\partial\mathcal{L}}{\partial y}\left(I+\frac{\partial F}{\partial x}\right)
+=\frac{\partial\mathcal{L}}{\partial y}
++\frac{\partial\mathcal{L}}{\partial y}\frac{\partial F}{\partial x}.
+\]
+<p>关键在第一个等号后的 \(I\)：<b>梯度有一条“直通”路径，不经过 F 的雅可比</b>。即使 \(F\) 的导数很小（深层网络常见的梯度消失），梯度也不会变成 0。</p>
+<p>把 \(L\) 个块串起来，展开乘积：</p>
+\[
+\frac{\partial\mathcal{L}}{\partial x_0}
+=\frac{\partial\mathcal{L}}{\partial x_L}\prod_{\ell=1}^{L}\left(I+J_\ell\right),
+\]
+<p>其中 \(J_\ell=\partial F_\ell/\partial x_{\ell-1}\)。把乘积展开成 \(2^L\) 项，每一项对应“跳过某些块”的路径；其中“全跳过”的那项就是恒等映射。所以深层网络至少有 \(2^L\) 条梯度路径，而不是只有一条连乘。</p>
+
+<h2>6.2 pre-norm：先归一化，再进子层</h2>
+<p>Qwen3 每个 decoder 层的实际数据流（<code>model/block.go</code>）：</p>
+\[
+\begin{aligned}
+h &= x, \\
+a &= \operatorname{Attention}\big(\operatorname{RMSNorm}(h;\gamma_1)\big), \\
+h &\leftarrow h+a, \\
+m &= \operatorname{MLP}\big(\operatorname{RMSNorm}(h;\gamma_2)\big), \\
+h &\leftarrow h+m .
+\end{aligned}
+\]
+<p>最后整个模型再算一次 <code>final_norm</code>，然后接 lm_head。注意两个细节：</p>
+<ul>
+<li>残差加的是<b>归一化之前</b>的 \(h\)，不是 Attention/MLP 的输入；</li>
+<li>归一化只发生在子层入口，残差主干（residual stream）本身不被归一化，所以它的尺度可以逐层增长，但每个子层看到的输入始终是“标准化”的。</li>
+</ul>
+<p>这和 post-norm（先加残差再归一化）相对。post-norm 在很深的网络里需要小心 warmup，否则早期梯度不稳定；pre-norm 把归一化放在子层前，主干保持恒等路径，训练更稳，是现代 LLM 的默认选择。</p>
+<p>注意：pre-norm 并不意味着“数值永远不炸”。残差主干的范数会随层数增长，所以最后还要一个 final norm 再进 lm_head；这也是为什么 RMSNorm 的尺度不变性很重要。</p>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

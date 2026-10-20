@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>1. 执行模型：warp、block、grid 与启动配置 · GPU 编程基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EG%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="01-execution.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">GPU 编程基础</a>
+</header>
+<main>
+<article>
+<h1 id="s1">1. 执行模型：warp、block、grid 与启动配置</h1>
+<p>CPU 程序员习惯“开 \(N\) 个线程，每个线程跑一段活”。GPU 的并行是<b>三层嵌套</b>：grid 里有很多 block，block 里有很多 warp，warp 由 32 个 lane 组成。写 kernel 时你只写“一个线程做什么”，但硬件实际按 warp 发指令。</p>
+
+<h2>1.1 三层结构</h2>
+<pre class="fig">grid（一次 kernel 启动）
+├── block (0,0)                     ← 一个 block 固定在一个 SM 上
+│   ├── warp 0 : lane  0 … 31
+│   ├── warp 1 : lane 32 … 63
+│   └── …                           ← block 内可以 __syncthreads()
+├── block (1,0)  → 另一个 SM      ┐
+├── block (0,1)  → 再一个 SM      ├ 执行顺序不确定，不能互相等待
+└── …                              ┘</pre>
+<p>三条规则就够了：</p>
+<ul>
+<li><b>block 是同步的边界。</b>block 内的线程可以 barrier、可以共享 shared memory；block 之间不能，只能靠全局内存 + 原子/fence（第 3 节），或者拆成两个 kernel。</li>
+<li><b>block 是调度的单位。</b>一个 block 一旦被放到某个 SM 上就待在那里跑完；block 到 SM 的映射由硬件决定，没有顺序保证。</li>
+<li><b>warp 是执行的单位。</b>32 个 lane 一起取指、一起执行；分支不同时才拆开。</li>
+</ul>
+<p>写索引的时候只用四个内建变量：<code>threadIdx</code>、<code>blockIdx</code>、<code>blockDim</code>、<code>gridDim</code>。二维版本如下：</p>
+<p class="file">index2d.cu</p>
+<pre><code>__global__ void scale2d(float* out, const float* in, int rows, int cols, float k) {
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    if (col &gt;= cols || row &gt;= rows) return;      // 边界检查：最后一个 block 会越界
+    out[row * cols + col] = in[row * cols + col] * k;
+}
+
+// host 侧
+dim3 block(32, 8);                               // 256 线程
+dim3 grid((cols + block.x - 1) / block.x,
+          (rows + block.y - 1) / block.y);
+scale2d&lt;&lt;&lt;grid, block&gt;&gt;&gt;(d_out, d_in, rows, cols, 2.0f);</code></pre>
+<p>注意两点。第一，<code>blockDim</code> 是运行时值，编译器不知道它是 32，所以索引乘加不会被常量折叠；追求极致时可以用模板把 block 大小变成编译期常量。第二，二维只是索引方便，硬件调度仍是一维的，<b>block 内的线程编号按 x 最快变化</b>，这会影响你后面设计合并访问的方式。</p>
+
+<h2>1.2 warp 与 SIMT：分支为什么会变贵</h2>
+<p>一个 warp 的 32 个 lane 共享同一个程序计数器。执行 <code>if / else</code> 时，如果 lane 分成两派，硬件会：</p>
+<ol class="steps">
+<li>用掩码只让“条件为真”的 lane 执行 then 分支；</li>
+<li>再用另一个掩码让“条件为假”的 lane 执行 else 分支；</li>
+<li>在汇合点（immediate post-dominator）恢复全掩码。</li>
+</ol>
+<p>也就是说，<b>两条路径是串行执行的</b>。下面这段代码里，每个 warp 正好一半 lane 走一条路：</p>
+<p class="file">divergence.cu</p>
+<pre><code>__global__ void divergence_demo(const float* x, float* y, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i &gt;= n) return;
+    float v = x[i];
+    if ((threadIdx.x &amp; 31) &lt; 16) v = __expf(v);              // lane 0–15
+    else                          v = __logf(fabsf(v) + 1.0f); // lane 16–31
+    y[i] = v;
+}</code></pre>
+<p>如果两条路径各有 10 条指令，这个 warp 实际发射 20 条，而理想情况是 10 条，<b>利用率 50%</b>。更糟的是循环：如果每个线程的循环次数不同，warp 会一直执行到<b>最长的那个</b>，短的 lane 全程空转。</p>
+<p>反过来，<b>块内一致（uniform）的分支是免费的</b>：</p>
+<pre><code>if (blockIdx.x == 0) { … }        // 整个 block 都走同一边，没有掩码切换
+if (threadIdx.x &gt;= n) return;     // 只有最后一个 block 会部分返回，代价可以忽略</code></pre>
+<p>warp 级原语可以让你“看见”掩码，从而把分支变成数据操作：</p>
+<pre><code>bool positive = v &gt; 0.0f;
+unsigned mask = __ballot_sync(0xffffffffu, positive);  // 位 i = lane i 的条件
+int npos = __popc(mask);                                // 这个 warp 里有多少个正数</code></pre>
+<div class="note">
+<p><b>Volta 之后的一个细节</b>：每线程有了独立的程序计数器（independent thread scheduling），warp 内可以更细粒度地交错，但<b>调度单位仍是 warp</b>，<code>__shfl_sync</code> / <code>__syncwarp</code> 也仍以 warp 为单位。不要依赖“两个 lane 会自动在同一时刻汇合”，需要同步就写 <code>__syncwarp(mask)</code>。</p>
+</div>
+
+<h2>1.3 启动配置</h2>
+<p>语法是 <code>kernel&lt;&lt;&lt;grid, block, sharedBytes, stream&gt;&gt;&gt;(args...)</code>。后两个参数可以省略。取值经验：</p>
+<ul>
+<li><b>block</b>：128–256 线程最稳。必须是 32 的倍数（否则尾 warp 有 lane 永远闲置）；上限 1024。</li>
+<li><b>grid</b>：<code>ceil(N / block)</code>。若要封顶，取 <code>blocksPerSM × SM 数</code>，循环体内用 grid-stride（1.4）。</li>
+<li><b>动态 shared memory</b>：第三个参数传入字节数，kernel 里用 <code>extern __shared__</code> 取地址。超过 48 KB 时要在 host 侧显式提高上限。</li>
+</ul>
+<p class="file">launch.cu</p>
+<pre><code>__global__ void scale(float* out, const float* in, int n, float k) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i &lt; n) out[i] = in[i] * k;
+}
+
+// 普通启动：grid、block 两个参数
+scale&lt;&lt;&lt;(n + 255) / 256, 256&gt;&gt;&gt;(d_out, d_in, n, 2.0f);
+
+// 需要 96 KiB 动态 shared 的 kernel：先提高单 block 上限（H100 约 227 KB）
+cudaFuncSetAttribute(myKernel, cudaFuncAttributeMaxDynamicSharedMemorySize, 96 &lt;&lt; 10);
+myKernel&lt;&lt;&lt;grid, 256, 96 &lt;&lt; 10&gt;&gt;&gt;(args...);   // 第三个参数就是字节数</code></pre>
+<p>启动配置本身也有成本：每次 launch 约 5 µs。如果 kernel 只跑 2 µs，把 100 次 launch 合成 1 次、用 grid-stride 在设备内循环，收益会比任何微优化都大。</p>
+
+<h2>1.4 grid-stride 循环</h2>
+<p>固定 grid、让每个线程处理多个元素，是 GPU 上的标准写法：</p>
+<p class="file">gridstride.cu</p>
+<pre><code>__global__ void saxpy(size_t n, float a, const float* x, float* y) {
+    size_t stride = (size_t)blockDim.x * gridDim.x;
+    for (size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x; i &lt; n; i += stride)
+        y[i] = a * x[i] + y[i];
+}
+
+// host：grid 封顶在“能常驻的 block 数”，和 N 无关
+int perSM = 0;
+cudaOccupancyMaxActiveBlocksPerMultiprocessor(&amp;perSM, saxpy, 256, 0);
+int sms = 0;
+cudaDeviceGetAttribute(&amp;sms, cudaDevAttrMultiProcessorCount, 0);
+int blocks = perSM * sms;
+saxpy&lt;&lt;&lt;blocks, 256&gt;&gt;&gt;(n, 2.0f, d_x, d_y);</code></pre>
+<p>好处有三个：<b>任意 \(N\)</b> 都不会越界；<b>launch 开销固定</b>，不会因为 \(N\) 大就启动几百万个 block；<b>索引计算可以复用</b>，每个线程的第一次访存天然连续。代价是每个线程要做一次循环判断，以及尾部的负载不均——相比带宽，这些都不值一提。</p>
+<p>注意 <code>stride</code> 用 <code>blockDim.x * gridDim.x</code>，不是 <code>gridDim.x</code>。这是最常见的下标错误之一。</p>
+
+<h2>1.5 占用率：有多少 warp 能同时在岗</h2>
+<p>占用率的定义很直接：</p>
+\[
+\text{occupancy} \;=\; \frac{\text{每 SM 常驻的 warp 数}}{\text{每 SM 最大 warp 数}},
+\]
+<p>H100/A100 的上限都是 64 个 warp（2048 线程）。常驻多少由四个资源里最紧的那个决定：</p>
+<ul>
+<li><b>寄存器</b>：每 SM 65536 个 32 位寄存器。每线程 32 个寄存器时，256 线程的 block 占 8192 个 → 8 个 block → 64 warp（100%）。每线程 64 个 → 4 个 block → 32 warp（50%）。</li>
+<li><b>shared memory</b>：每 block 48 KB、SM 有 228 KB → 最多 4 个 block → 50%。</li>
+<li><b>block 数</b>：每 SM 最多 32 个 block。block 只有 32 线程时，32 个 block 也只有 32 warp → 50%。</li>
+<li><b>线程数</b>：每 SM 最多 2048，block 1024 线程时只能放 2 个。</li>
+</ul>
+<p>查询真实值不要手算，用运行时 API：</p>
+<pre><code>int perSM = 0;
+cudaOccupancyMaxActiveBlocksPerMultiprocessor(&amp;perSM, myKernel, 256, /*dynamicSMem=*/0);
+// 实际占用率 = perSM * (256/32) / 64</code></pre>
+<div class="key"><span class="tag">经验</span>
+<p>占用率不是越高越好。它只是“有多少 warp 可以用来藏延迟”。一个每线程读 16 B、ILP 很深的 kernel，40% 占用率也可能跑满带宽；反过来，100% 占用率但每个 warp 只读 4 B，依然喂不饱内存（回到 0.3 的账）。<b>先把字节/指令比做上去，再看占用率。</b></p>
+</div>
+<p>控制寄存器用量可以用 <code>__launch_bounds__(maxThreads, minBlocksPerSM)</code> 提示编译器，或编译选项 <code>-maxrregcount=N</code>。前者更精细：它只约束这个 kernel，不会牵连别的。</p>
+
+<h2>1.6 和 CPU 的对照</h2>
+<div class="tablewrap"><table class="cmp">
+<thead><tr><th>CPU 概念</th><th>GPU 对应</th><th>差别</th></tr></thead>
+<tbody>
+<tr><td>std::thread</td><td>一个 lane</td><td>GPU 线程极轻，创建/切换由硬件完成</td></tr>
+<tr><td>SIMD intrinsics</td><td>warp 内 32 lane</td><td>自动，不需要手写 <code>_mm256_*</code></td></tr>
+<tr><td>线程数 8–128</td><td>线程数 \(10^4\)–\(10^6\)</td><td>并行度高 3–4 个数量级</td></tr>
+<tr><td>抢占式调度</td><td>warp 轮换，block 不抢占</td><td>长 kernel 会占住 SM 直到跑完</td></tr>
+<tr><td>pthread_barrier</td><td><code>__syncthreads()</code></td><td>只作用于 block 内</td></tr>
+<tr><td>thread_local</td><td>寄存器 + 局部内存</td><td>寄存器溢出会落到“local memory”（其实是显存），非常慢</td></tr>
+</tbody></table></div>
+
+<h2>1.7 容易写错的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li><b>blockDim 不是 32 的倍数，却用 <code>0xffffffff</code> 做 shuffle。</b>最后一个 warp 的 mask 必须按实际活跃 lane 计算，否则是 UB。</li>
+<li><b>用 <code>int</code> 索引大数组。</b>\(2^{31}\) 个 float 只有 8 GiB，超过就溢出。<code>size_t</code> 或 <code>long long</code>。</li>
+<li><b>假设 block 之间有执行顺序。</b>“先算 block 0 再算 block 1”是错的；需要全局顺序就拆 kernel。</li>
+<li><b>launch 之后立刻在 host 上读设备指针。</b>kernel 是异步的，host 直接解引用 → 段错误或垃圾值。</li>
+<li><b>不检查 launch 错误。</b>参数错误在 launch 时就能报，越界要等同步；两者都要查（见 6.1 的 <code>CK</code> 宏）。</li>
+</ul>
+</div>
+</article>
+</main>
+<footer>
+<p>为 <code>GPU 编程基础</code> 系列编写 · 公式使用本地 KaTeX 渲染，可离线阅读。</p>
+</footer>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

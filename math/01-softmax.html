@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>1. softmax：为什么是指数，为什么先减最大值 · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="01-softmax.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s1">1. softmax：为什么是指数，为什么先减最大值</h1>
+<p>模型最后一层吐出 \(V\) 个数 \(z_1,\dots,z_V\)，叫 <b>logits</b>。它们可以是任意实数，加起来也不等于 1，不能当概率。softmax 的任务是把它们变成一个合法的概率分布。</p>
+
+<h2>1.1 先确定形式：分子非负，分母归一</h2>
+<p>最自然的形式是“每个分数过一个非负函数，再除以总和”：</p>
+\[
+p_i=\frac{f(z_i)}{\sum_{j=1}^{V}f(z_j)},\qquad f>0 .
+\]
+<p>这样自动满足 \(p_i>0\)、\(\sum_i p_i=1\)。问题是 \(f\) 该取什么。如果希望“两个 token 的相对概率只取决于它们分数之差”，即</p>
+\[
+\frac{p_i}{p_j}=\frac{f(z_i)}{f(z_j)}=f(z_i-z_j),
+\]
+<p>那么 \(f\) 必须满足 \(f(a+b)=f(a)f(b)\)。下面解这个函数方程。</p>
+<ol class="steps">
+<li>令 \(g(u)=f(u)/f(0)\)，则 \(g(0)=1\)，且 \(g(a+b)=g(a)g(b)\)。</li>
+<li>对整数 \(n\)：\(g(n)=g(1)^n\)（归纳：\(g(n)=g(n-1)g(1)\)）。对负整数用 \(g(-n)g(n)=g(0)=1\)。</li>
+<li>对有理数 \(u=m/n\)：\(g(u)^n=g(nu)=g(m)=g(1)^m\)，所以 \(g(m/n)=g(1)^{m/n}\)。</li>
+<li>若 \(g\) 连续（任何正常的函数都满足），有理数稠密，取极限得 \(g(u)=g(1)^u\)。</li>
+</ol>
+<p>所以 \(f(z)=f(0)\,c^z\)，其中 \(c=g(1)>0\)。常数 \(f(0)\) 会在分子分母里约掉。取 \(c=e\) 最方便，因为 \(\frac{d}{dz}e^z=e^z\)，求导时不用额外带 \(\ln c\)。若取别的底 \(c\)，只是把 \(z\) 重新缩放成 \(z\ln c\)，分布完全一样。</p>
+<div class="key"><span class="tag">结论</span>
+<p>如果要求“证据可加、相对概率只看差值”，指数是唯一的选择。于是</p>
+\[
+\boxed{\;p_i=\frac{e^{z_i}}{\sum_{j=1}^{V}e^{z_j}}\;}
+\]
+<p>另一种等价说法：在所有给定平均得分的分布里，softmax 是熵最大的那个（指数族），所以它是最“不额外假设”的选择。</p>
+</div>
+
+<h2>1.2 手算一个三分类</h2>
+<p>取 \(z=(2,1,0)\)。先算指数：\(e^2=7.389\)，\(e^1=2.718\)，\(e^0=1\)，总和 \(S=11.107\)。于是</p>
+\[
+p=\left(\frac{7.389}{11.107},\frac{2.718}{11.107},\frac{1}{11.107}\right)=(0.665,\,0.245,\,0.090).
+\]
+<p>验证：三项相加为 1；分数每降 1，概率大约除以 \(e\)（0.665/0.245≈2.72）。这就是“logit 差 1 ≈ 概率比 e 倍”。</p>
+
+<h2>1.3 减去最大值：一个恒等式</h2>
+<p>直接算 \(e^{z_i}\) 会溢出：float32 的最大值约 \(3.4\times10^{38}\)，而 \(e^{89}\approx4.5\times10^{38}\) 就爆了。解决办法是分子分母同乘 \(e^{-M}\)：</p>
+\[
+p_i=\frac{e^{z_i}}{\sum_j e^{z_j}}
+=\frac{e^{-M}e^{z_i}}{e^{-M}\sum_j e^{z_j}}
+=\frac{e^{z_i-M}}{\sum_j e^{z_j-M}} .
+\]
+<p>这是<b>恒等变形</b>，不是近似。取 \(M=\max_j z_j\) 后，最大的指数是 \(e^0=1\)，其余都 \(\le 1\)，分母最多 \(V\)，不可能溢出；同时最小的指数可能下溢到 0，但那只代表“概率小到可以忽略”，不影响结果。</p>
+
+<h2>1.4 导数：softmax 不是逐元素的</h2>
+<p>令 \(S=\sum_k e^{z_k}\)，则 \(p_i=e^{z_i}/S\)。对 \(z_j\) 求偏导，要分 \(i=j\) 和 \(i\ne j\)：</p>
+<ol class="steps">
+<li>当 \(i=j\)：分子导数是 \(e^{z_i}\)，分母导数也是 \(e^{z_j}=e^{z_i}\)。由商法则
+\[
+\frac{\partial p_i}{\partial z_i}=\frac{e^{z_i}S-e^{z_i}e^{z_i}}{S^2}=p_i(1-p_i).
+\]</li>
+<li>当 \(i\ne j\)：分子对 \(z_j\) 的导数为 0，分母导数为 \(e^{z_j}\)，所以
+\[
+\frac{\partial p_i}{\partial z_j}=\frac{0-e^{z_i}e^{z_j}}{S^2}=-p_ip_j .
+\]</li>
+</ol>
+<p>合并成一行（\(\delta_{ij}=1\) 当 \(i=j\)，否则 0）：</p>
+\[
+\boxed{\frac{\partial p_i}{\partial z_j}=p_i(\delta_{ij}-p_j).}
+\]
+<p>这个矩阵叫 Jacobian。它有一个重要性质：每一行加起来为 0，因为 \(\sum_i p_i(\delta_{ij}-p_j)=p_j-p_j\sum_i p_i=0\)。直觉是“把所有 logit 同时加一个常数，概率不变”，所以导数在“全 1 方向”上必须为 0，和 1.3 的平移不变性一致。</p>
+<div class="warn"><span class="tag">容易写错</span>
+<p>softmax 的梯度不是 \(p_i(1-p_i)\) 的逐元素向量。交叉项 \(-p_ip_j\) 是存在的；只有当损失对 \(p\) 的梯度恰好是 one-hot 时，化简后才会消掉（见<a href="02-cross-entropy-kl.html">第 2 节</a>）。</p>
+</div>
+
+<h2>1.5 log-sum-exp：把 softmax 写在对数域</h2>
+<p>语言模型经常要“某个 token 的对数概率”。直接算 \(\ln p_i=z_i-\ln\sum_j e^{z_j}\)，但 \(\sum e^{z_j}\) 会溢出。用同样的平移技巧：</p>
+\[
+\operatorname{LSE}(z):=\ln\sum_{j=1}^{V}e^{z_j}
+=M+\ln\sum_{j=1}^{V}e^{z_j-M},\qquad M=\max_j z_j .
+\]
+<p>于是</p>
+\[
+\log p_i=z_i-\operatorname{LSE}(z).
+\]
+<p>这个量永远 \(\le 0\)（因为 \(p_i\le1\)），数值上也不会溢出。仓库里的 <code>shiftAndLogSum</code> 就是在算 \(z_i-M\) 和 \(\ln\sum e^{z_i-M}\)，<code>LogSoftmax32</code> 再把两者相减。</p>
+
+<div class="demo">
+<h4>动手：温度如何改变分布</h4>
+<p class="stat" style="margin-top:0">固定 logits \(z=(2,1,0.5,0,-1)\)，拖动温度 \(T\)，看 \(p_i\propto e^{z_i/T}\) 和熵 \(H=-\sum p_i\ln p_i\)。</p>
+<div id="bars"></div>
+<input type="range" id="temp" min="5" max="300" value="100" aria-label="温度">
+<p class="stat">\(T=\) <b id="tv">1.00</b> ｜ 最大概率 <b id="pmax">–</b> ｜ 熵 <b id="ent">–</b> nat ｜ 有效候选数 \(e^H=\) <b id="eff">–</b></p>
+<p class="stat" style="color:var(--muted)">\(T\to0\) 时趋近 argmax（概率全给最大值）；\(T\) 变大时趋近均匀分布（5 个候选，熵趋近 \(\ln 5=1.609\)）。</p>
+</div>
+</article>
+</main>
+<script>
+(function(){
+  var el = document.getElementById('temp');
+  var logits = [2, 1, 0.5, 0, -1];
+  var labels = ['A','B','C','D','E'];
+  var bars = document.getElementById('bars');
+  var fills = [], vals = [];
+  for (var i = 0; i < logits.length; i++) {
+    var row = document.createElement('div'); row.className = 'bar-row';
+    var lab = document.createElement('span'); lab.className = 'bar-label'; lab.textContent = labels[i];
+    var track = document.createElement('div'); track.className = 'bar-track';
+    var fill = document.createElement('div'); fill.className = 'bar-fill'; fill.style.width = '20%';
+    var val = document.createElement('span'); val.className = 'bar-val';
+    track.appendChild(fill); row.appendChild(lab); row.appendChild(track); row.appendChild(val);
+    bars.appendChild(row); fills.push(fill); vals.push(val);
+  }
+  function update(){
+    var T = +el.value / 100;
+    var m = Math.max.apply(null, logits);
+    var ex = logits.map(function(z){ return Math.exp((z - m) / T); });
+    var S = ex.reduce(function(a,b){ return a + b; }, 0);
+    var p = ex.map(function(e){ return e / S; });
+    var H = 0, pmax = 0;
+    for (var i = 0; i < p.length; i++) {
+      fills[i].style.width = (p[i] * 100).toFixed(1) + '%';
+      vals[i].textContent = p[i].toFixed(3);
+      if (p[i] > 0) H -= p[i] * Math.log(p[i]);
+      if (p[i] > pmax) pmax = p[i];
+    }
+    document.getElementById('tv').textContent = T.toFixed(2);
+    document.getElementById('pmax').textContent = pmax.toFixed(3);
+    document.getElementById('ent').textContent = H.toFixed(3);
+    document.getElementById('eff').textContent = Math.exp(H).toFixed(2);
+  }
+  el.addEventListener('input', update);
+  update();
+})();
+</script>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>7. 性能测量、数值与常见陷阱 · GPU 编程基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EG%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="07-perf.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">GPU 编程基础</a>
+</header>
+<main>
+<article>
+<h1 id="s7">7. 性能测量、数值与常见陷阱</h1>
+<p>GPU 上的性能直觉比 CPU 更容易错：同一段代码，改一个 block 大小可能差 3 倍，换个访问顺序可能差 8 倍。这一节先把“怎么测”定下来，再给三个可以手算的极限，最后是移植检查清单。</p>
+
+<h2>7.1 怎么测才算数</h2>
+<p>三步，缺一不可：<b>warmup、多次采样、每次之间加同步</b>。</p>
+<p class="file">bench.cu</p>
+<pre><code>#include &lt;algorithm&gt;
+#include &lt;vector&gt;
+
+// 1) warmup：让时钟爬升、cache 预热、驱动完成首次加载
+for (int i = 0; i &lt; 10; ++i) kernel&lt;&lt;&lt;blocks, 256&gt;&gt;&gt;(d, n);
+CK(cudaDeviceSynchronize());
+
+// 2) 逐次计时，拿分布而不是一个数
+cudaEvent_t a, b;
+CK(cudaEventCreate(&amp;a)); CK(cudaEventCreate(&amp;b));
+std::vector&lt;float&gt; ms(iters);
+
+for (int i = 0; i &lt; iters; ++i) {
+    CK(cudaEventRecord(a));
+    kernel&lt;&lt;&lt;blocks, 256&gt;&gt;&gt;(d, n);
+    CK(cudaEventRecord(b));
+    CK(cudaEventSynchronize(b));          // 只等这一次
+    CK(cudaEventElapsedTime(&amp;ms[i], a, b));
+}
+
+std::sort(ms.begin(), ms.end());
+printf("median %.4f ms, p90 %.4f ms\n", ms[iters / 2], ms[iters * 9 / 10]);</code></pre>
+<p>为什么要这样：</p>
+<ul>
+<li><b>第一次运行不算数。</b>GPU 会从低功耗状态爬频，驱动也可能在第一次 launch 时做 JIT 和模块加载。</li>
+<li><b>中位数比平均值可靠。</b>偶发的上下文切换和时钟波动会把平均值拉偏；p90 能告诉你尾延迟。</li>
+<li><b>同步的位置要对。</b>测吞吐时在循环外同步一次；测单次延迟时每次同步。两者不能混。</li>
+<li><b>用 debug 编译测性能没有意义。</b><code>-G</code> 会关掉几乎所有优化，数字可以差 10 倍。</li>
+</ul>
+<p>还要留意降频：<code>nvidia-smi -q -d CLOCK</code> 可以看到当前频率是否掉到 base clock。功耗墙和温度墙在长时间跑大 kernel 时很常见。</p>
+
+<h2>7.2 三个极限：先算下界，再看差距</h2>
+<p>任何 kernel 的时间都不可能低于这三者中的最大项：</p>
+<ol class="steps">
+<li><b>带宽下界</b>：必须搬运的字节数除以 \(BW\)。</li>
+<li><b>算力下界</b>：必须做的浮点运算数除以 \(P\)。</li>
+<li><b>延迟下界</b>：启动开销、同步点、依赖链长度之和。</li>
+</ol>
+<p>先手算前两个，取较大者，再和实测比。如果实测是下界的 1.1–1.5 倍，已经不错；如果是 5 倍，先查访问模式和占用率。下面这个例子把三个都算一遍：</p>
+<div class="tablewrap"><table>
+<thead><tr><th>例子</th><th>带宽下界</th><th>算力下界</th><th>实际瓶颈</th></tr></thead>
+<tbody>
+<tr><td>16M float 向量加（\(N=2^{24}\)）</td><td class="num">192 MiB / 3.35 TB/s ≈ 60 µs</td><td class="num">33M FLOP / 67 TFLOPS ≈ 0.5 µs</td><td>带宽</td></tr>
+<tr><td>1024³ GEMM</td><td class="num">12 MiB / 3.35 TB/s ≈ 3.6 µs</td><td class="num">2.1 GFLOP / 67 TFLOPS ≈ 32 µs</td><td>算力（未算复用前）</td></tr>
+<tr><td>100 个 2 µs 的小 kernel</td><td class="num">—</td><td class="num">—</td><td>launch：100 × 5 µs = 0.5 ms</td></tr>
+</tbody></table></div>
+<p>最后一行解释了为什么“把 100 次 launch 合成 1 次、在 kernel 里循环”经常能立刻提速几倍。启动开销是固定成本，和 kernel 大小无关。</p>
+<p>有效带宽的定义是</p>
+\[
+BW_{\text{eff}}=\frac{\text{实际搬运的字节}}{\text{时间}} .
+\]
+<p>例如 1 GiB 的拷贝（读 + 写共 2 GiB）耗时 1.2 ms，则 \(BW_{\text{eff}}\approx1.7\) TB/s，约为 H100 峰值的 50%。低于 50% 时，先看合并访问（2.3）和每指令字节数（2.2）。</p>
+
+<h2>7.3 profiler 看哪几个数</h2>
+<p>不要靠猜。Nsight Compute（<code>ncu</code>）先看“Speed of Light”页的两个百分比：</p>
+<ul>
+<li><b>Memory Throughput</b>：显存带宽用了多少。接近 100% 说明带宽受限，优化方向是减少流量。</li>
+<li><b>Compute (SM) Throughput</b>：算力用了多少。接近 100% 说明算力受限，优化方向是指令效率（减少冗余计算、用 FMA、用 Tensor Core）。</li>
+<li><b>Achieved Occupancy</b>：实际常驻 warp / 上限，和 1.5 的估算对照，能发现寄存器或 shared 超预期。</li>
+<li><b>Warp Stall Reasons</b>：<code>long scoreboard</code> 高 = 等显存；<code>barrier</code> 高 = 同步太多或负载不均；<code>MIO throttle</code> 高 = shared/特殊函数挤爆了流水线。</li>
+<li><b>L2 Hit Rate</b> 与 <b>Sectors/Request</b>：后者接近 4（一个 warp 128 B = 4 个 sector）说明合并良好；明显大于 4 就是访问散了。</li>
+</ul>
+<p>Nsight Systems（<code>nsys</code>）看时间线：传输和计算有没有重叠、流之间有没有空隙、有没有意料之外的同步。它回答“整体时间花在哪”，Compute 回答“这个 kernel 内部为什么慢”。</p>
+<p>正确性用 <code>compute-sanitizer</code>：<code>--tool memcheck</code> 查越界，<code>--tool racecheck</code> 查 shared 竞争，<code>--tool initcheck</code> 查未初始化读。它的开销很大，只在调试时开。</p>
+
+<h2>7.4 数值：精度、FTZ 与确定性</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>格式</th><th>符号/指数/尾数</th><th>有效位数</th><th>相对精度（约）</th></tr></thead>
+<tbody>
+<tr><td>FP32</td><td>1 / 8 / 23</td><td>24</td><td class="num">6e-8</td></tr>
+<tr><td>TF32</td><td>1 / 8 / 10</td><td>11</td><td class="num">5e-4</td></tr>
+<tr><td>FP16</td><td>1 / 5 / 10</td><td>11</td><td class="num">5e-4</td></tr>
+<tr><td>BF16</td><td>1 / 8 / 7</td><td>8</td><td class="num">4e-3</td></tr>
+</tbody></table></div>
+<p>和 CPU 相同的是：都遵循 IEEE 754 的舍入规则，误差用 ULP 或相对误差衡量，Kahan 补偿求和同样有效。不同的是：</p>
+<ul>
+<li><b>FTZ</b>：GPU 默认可能把非规格化数刷成 0（<code>-ftz=true</code>），CPU 一般保留。极小值附近的差异不是 bug。</li>
+<li><b><code>--use_fast_math</code></b> 会把除法、开方、<code>expf</code> 换成近似指令，误差可达几个 ULP 到 \(10^{-4}\)，还会打开 FTZ。用它之前先确认容差。</li>
+<li><b>累加顺序</b>：归约树、原子、Tensor Core 的累加顺序都和串行不同，结果无法逐位复现。跨实现对比用相对误差（CPU 侧的门槛通常是 \(10^{-6}\)，Tensor Core 用 \(10^{-3}\)）。</li>
+<li><b>原子浮点求和</b>：顺序由调度决定，每次运行都可能不同。要复现就固定树形结构，或改用整数/定点。</li>
+</ul>
+
+<h2>7.5 移植检查清单</h2>
+<ol class="steps">
+<li><b>数据量够大吗？</b>低于几十万元素、或只跑一次，传输和启动就吃掉收益（0.5）。</li>
+<li><b>数据能常驻显存吗？</b>能，才谈得上加速；每次请求都重传，先算 PCIe 的账。</li>
+<li><b>分支整齐吗？</b>同一 warp 内路径是否一致；能不能改写成无分支（查表、掩码、排序）。</li>
+<li><b>访问合并吗？</b>看每个 warp 覆盖的字节数、Sectors/Request、AoS 能否改 SoA。</li>
+<li><b>复用进 shared 了吗？</b>tile 是否够大（≥ 64×64），有没有 bank conflict。</li>
+<li><b>占用率与 ILP 够吗？</b>寄存器有没有爆、每线程是否只发一个 4 B 请求（0.3）。</li>
+<li><b>启动与传输占比多少？</b>小 kernel 合并，流式传输用 pinned + 多流（6.2、6.3）。</li>
+<li><b>精度在容差内吗？</b>换了 Tensor Core 或 fast math 之后重新验收。</li>
+<li><b>需要复现吗？</b>去掉原子汇总，固定归约顺序。</li>
+<li><b>用 profiler 验证过瓶颈吗？</b>没有数据支撑的优化都是猜。</li>
+</ol>
+
+<h2>7.6 容易写错的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li><b>循环里带同步计时。</b>测到的是“launch + 同步”的和，不是 kernel 本身。</li>
+<li><b>只跑一次就下结论。</b>时钟、cache、调度都会让第一次偏慢。</li>
+<li><b>拿 debug 版 GPU 代码对比 <code>-O3</code> 的 CPU 代码。</b>这不是对比，是自欺。</li>
+<li><b>CPU 只跑单线程。</b>要公平就都用满，或者明确说明只比单线程延迟。</li>
+<li><b>忽略降频。</b>笔记本和被动散热的卡跑久了大面积掉频，数字不可比。</li>
+<li><b>“能跑通”当成“正确”。</b>越界写经常不崩，只是悄悄改坏别的数据；用 <code>compute-sanitizer</code>。</li>
+<li><b>在 GPU 上照搬 CPU 的优化顺序。</b>CPU 上先减少指令数，GPU 上通常先减少字节数、先修访问模式。</li>
+</ul>
+</div>
+</article>
+</main>
+<footer>
+<p>为 <code>GPU 编程基础</code> 系列编写 · 公式使用本地 KaTeX 渲染，可离线阅读。</p>
+</footer>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

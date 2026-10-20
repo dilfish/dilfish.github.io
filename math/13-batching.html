@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>13. 批处理、padding、chunked prefill · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="13-batching.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s13">13. 批处理、padding、chunked prefill</h1>
+
+<h2>13.1 为什么 batching 能提速：算术强度</h2>
+<p>一个权重矩阵 \(W\in\mathbb{R}^{m\times n}\) 有 \(mn\) 个参数。处理 \(B\) 个 token（或 \(B\) 个序列各 1 个 token）时，计算量约 \(2Bmn\)，但权重只需要从内存读一次（\(4mn\) 字节，float32）。只算权重这一项，定义<b>算术强度</b>为“每读一字节做多少次浮点运算”：</p>
+\[
+\text{AI}=\frac{2Bmn}{4mn}=\frac{B}{2}\ \text{FLOP/byte}.
+\]
+<p>\(B=1\) 时只有 0.5，远低于现代 CPU/GPU 的“计算/带宽”比值，所以 decode 是<b>内存带宽受限</b>：时间主要花在读权重，而不是算。\(B\) 增大，AI 线性增长，逐渐变成<b>计算受限</b>，同样的权重被更多 token 摊薄，吞吐上升。这就是 continuous batching 的收益来源。</p>
+<p>如果每个序列长度不同，要 padding 到同一宽度 \(T_{\max}\)。浪费比例是</p>
+\[
+1-\frac{\sum_{i=1}^{B}T_i}{B\cdot T_{\max}} .
+\]
+<p>长度差异越大，padding 越浪费；这也是为什么调度器更愿意把长度相近的请求放一起，或者用 chunked prefill 切长 prompt。</p>
+
+<h2>13.2 continuous batching：每一步都重新组批</h2>
+<p>传统静态 batch 要等一整批都结束才能换下一批；continuous batching 在<b>每个解码步</b>检查：</p>
+<ol>
+<li>有新请求且资源够（块数、token 预算、batch 上限）→ 准入；</li>
+<li>对每个 running 序列推进一个 token（或一段 prefill chunk）；</li>
+<li>遇到 EOS / 达到 max_tokens → 退出，释放块；</li>
+<li>下一轮重新组批。</li>
+</ol>
+<p>这样短请求结束后，空出的槽位立刻给新请求，GPU/CPU 不会因为“等最长的那个”而空转。吞吐的粗算可以用 Little 定律：</p>
+\[
+L=\lambda W,
+\]
+<p>其中 \(L\) 是系统内平均并发数，\(\lambda\) 是吞吐（请求/秒），\(W\) 是平均逗留时间。并发越高，在延迟不变时吞吐越高。</p>
+
+<h2>13.3 chunked prefill：把长 prompt 切片</h2>
+<p>长 prompt 的 prefill 是平方成本，一次做完会长时间占住整个 batch。chunked prefill 把 prompt 切成每轮最多 <code>prefillChunk</code> 个 token 的片段，并受全局 <code>maxBatchedTokens</code> 预算约束：</p>
+\[
+\text{本轮 prefill 总量}=\sum_{i}\min\big(\text{chunk},\ \text{remaining}_i\big)\le \text{maxBatchedTokens}.
+\]
+<p>decode 不占这个预算（代码注释明确写了），所以长 prompt 不会把已经在解码的序列饿死。</p>
+<p>总计算量会变吗？设 prompt 长度 \(T=Kc\)。第 \(k\) 个 chunk 有 \(c\) 个 query，每个 query 要看前面约 \(kc\) 个 key，注意力成本约 \(c\cdot kc\)。总和</p>
+\[
+\sum_{k=1}^{K}c\cdot kc=c^2\frac{K(K+1)}{2}\approx\frac{T^2}{2},
+\]
+<p>和一次性 prefill 的 \(T^2/2\) 同阶。所以 chunking <b>不减少总 FLOPs</b>，它优化的是延迟公平性和 batch 利用率：把一个大任务拆成小片，让其他请求有机会插进来。</p>
+
+<h2>13.4 准入与抢占：块数够不够</h2>
+<p>一个序列长度 \(T\)、每块 \(B\) 个 token、\(L\) 层，需要</p>
+\[
+L\cdot\left\lceil\frac{T}{B}\right\rceil
+\]
+<p>个物理块。准入前要预留“当前长度 + 本次要生成的 token 数”所需的块；如果空闲块不够，调度器要么让请求继续排队，要么抢占（preempt）某个 running 序列。</p>
+<p>本项目的抢占选择“重算”而不是“换出到内存”：被抢占的序列释放块，之后重新用 chunked prefill 把 prompt 再喂一遍。这是因为纯 Go、CPU 场景下，换出的拷贝成本和实现复杂度都不划算；重算的代价是 \(O(T^2)\) 的 prefill，但语义简单、不会引入 swap 的一致性 bug。</p>
+<p><b>对应代码</b>：<code>cmd/server/scheduler.go</code>（准入、预算、抢占）、<code>model/batchstep.go</code>（左 padding 与绝对位置）。</p>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

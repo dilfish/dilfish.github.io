@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f7f7f5">
+  <title>示例文档 · dilfish docs</title>
+  <link rel="stylesheet" href="/assets/css/site.css">
+</head>
+<body>
+  <div class="wrap">
+    <a class="back" href="/">← 返回目录</a>
+
+    <article class="doc">
+      <h1>示例文档</h1>
+
+      <p>这是文档页的骨架。其他程序生成 HTML 时，沿用同样的
+        <code>meta viewport</code>、<code>site.css</code> 和 <code>.doc</code> 容器即可。</p>
+
+      <h2>正文结构</h2>
+      <p>正文以 <code>&lt;h2&gt;</code> 分节，段落不设置固定宽度，跟随容器自适应。</p>
+
+      <pre><code>&lt;article class="doc"&gt;
+  &lt;h1&gt;标题&lt;/h1&gt;
+  &lt;p&gt;正文&lt;/p&gt;
+&lt;/article&gt;</code></pre>
+
+      <h2>代码块</h2>
+      <p>代码块横向滚动，不会撑宽页面：</p>
+
+      <pre><code>curl -sSL -H "Authorization: Bearer $CF_API_TOKEN" "https://api.cloudflare.com/client/v4/zones?per_page=50" | jq '.result[] | {id, name}'</code></pre>
+
+      <h2>列表与提示</h2>
+      <ul>
+        <li>触控目标不小于 44 × 44 CSS 像素</li>
+        <li>长链接自动断行</li>
+        <li>只有浅色模式，不跟随系统开关</li>
+      </ul>
+
+      <blockquote>只保证 2800 × 1260 / 452 PPI 这台机器的显示效果。</blockquote>
+
+      <h2>表格</h2>
+      <table>
+        <thead>
+          <tr><th>项目</th><th>值</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>物理分辨率</td><td>2800 × 1260</td><td>竖屏宽度 1260 物理像素</td></tr>
+          <tr><td>像素密度</td><td>452 PPI</td><td>推断 DPR 3.0，CSS 视口约 420 × 933</td></tr>
+        </tbody>
+      </table>
+    </article>
+  </div>
+</body>
+</html>

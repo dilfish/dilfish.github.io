@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>6. 主机侧：拷贝、流、事件与多卡 · GPU 编程基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EG%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="06-host.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">GPU 编程基础</a>
+</header>
+<main>
+<article>
+<h1 id="s6">6. 主机侧：拷贝、流、事件与多卡</h1>
+<p>kernel 写得再好，数据和它之间还隔着一条 PCIe。这一节讲主机侧的账：<b>一次拷贝有多贵、怎么让拷贝和计算重叠、怎么正确地计时</b>。很多“GPU 没提速”的案例，问题根本不在 kernel。</p>
+
+<h2>6.1 分离的内存</h2>
+<p>显存和主机内存是两套物理内存。设备指针在主机上解引用会崩，主机指针也不能直接在 kernel 里用（除非用了统一内存或 zero-copy）。完整骨架长这样：</p>
+<p class="file">host.cu</p>
+<pre><code>#include &lt;cstdio&gt;
+#include &lt;cstdlib&gt;
+#include &lt;cuda_runtime.h&gt;
+
+#define CK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { \
+    fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(e_)); \
+    std::exit(1); } } while (0)
+
+int main() {
+    const size_t bytes = 64ull &lt;&lt; 20;              // 64 MiB
+    float *h = nullptr, *d = nullptr;
+
+    CK(cudaHostAlloc((void**)&amp;h, bytes, cudaHostAllocDefault));  // pinned
+    CK(cudaMalloc((void**)&amp;d, bytes));
+
+    CK(cudaMemcpy(d, h, bytes, cudaMemcpyHostToDevice));
+    kernel&lt;&lt;&lt;(bytes / 4 + 255) / 256, 256&gt;&gt;&gt;(d, bytes / 4);
+    CK(cudaGetLastError());
+    CK(cudaMemcpy(h, d, bytes, cudaMemcpyDeviceToHost));
+
+    CK(cudaFree(d));
+    CK(cudaFreeHost(h));                            // pinned 用 cudaFreeHost
+}</code></pre>
+<p><code>cudaMalloc</code> 是<b>同步</b>的，而且可能很慢：驱动要建立页表映射，几 MB 的分配经常是几百微秒。不要在热路径里反复分配；用一次分配、重复使用，或者用 <code>cudaMallocAsync</code> 的池（CUDA 11.2+）。</p>
+<p>UVA（统一虚拟地址）让主机指针和设备指针落在同一个地址空间，可以用 <code>cudaPointerGetAttributes</code> 判断一个指针属于谁。它不改变物理上的分离，只是省掉了“这个指针是哪边的”这类手工记账。</p>
+
+<h2>6.2 为什么必须用 pinned memory</h2>
+<p>普通 <code>malloc</code> 的页可能被换出，DMA 引擎不能直接拿它的物理地址。驱动只能先把数据拷到一块临时的锁定页，再发起传输——<b>于是你的“异步”拷贝退化成同步</b>，带宽也打折。用 <code>cudaHostAlloc</code> 或 <code>cudaHostRegister</code> 锁住页之后，DMA 可以直接读写：</p>
+<pre><code>// 错误：pageable 内存 + Async，实际是同步的
+cudaMemcpyAsync(d, h_pageable, bytes, cudaMemcpyHostToDevice, s);
+
+// 正确：pinned 内存，DMA 真正异步
+cudaHostAlloc((void**)&amp;h, bytes, cudaHostAllocDefault);
+cudaMemcpyAsync(d, h, bytes, cudaMemcpyHostToDevice, s);</code></pre>
+<p>代价是锁住的页不能被换出、也不能被 OS 随意挪动，锁太多会拖累整个系统。通常只锁“正在流式传输”的那几块缓冲区。PCIe 4.0 x16 的单向带宽约 32 GB/s，5.0 x16 约 64 GB/s；H2D 和 D2H 可以同时进行，总线和双向计数时要注意别重复算。</p>
+
+<h2>6.3 流：把拷贝和计算叠起来</h2>
+<p>stream 是一个有序队列：同一个流里的操作按顺序执行，不同流之间可以并发。把数据切成几块，每块用独立的流做“拷贝进 → 计算 → 拷贝出”，就能让 DMA 和 SM 同时工作：</p>
+<p class="file">streams.cu</p>
+<pre><code>const int nStreams = 4;
+cudaStream_t s[nStreams];
+for (int i = 0; i &lt; nStreams; ++i) CK(cudaStreamCreate(&amp;s[i]));
+
+size_t n = bytes / sizeof(float);
+size_t chunk = n / nStreams;
+for (int i = 0; i &lt; nStreams; ++i) {
+    size_t off = i * chunk;
+    size_t cnt = (i == nStreams - 1) ? (n - off) : chunk;   // 最后一块收尾
+    CK(cudaMemcpyAsync(d + off, h + off, cnt * sizeof(float),
+                       cudaMemcpyHostToDevice, s[i]));
+    kernel&lt;&lt;&lt;(cnt + 255) / 256, 256, 0, s[i]&gt;&gt;&gt;(d + off, cnt);
+    CK(cudaMemcpyAsync(h + off, d + off, cnt * sizeof(float),
+                       cudaMemcpyDeviceToHost, s[i]));
+}
+for (int i = 0; i &lt; nStreams; ++i) CK(cudaStreamSynchronize(s[i]));
+for (int i = 0; i &lt; nStreams; ++i) CK(cudaStreamDestroy(s[i]));</code></pre>
+<p>三个前提同时满足才有重叠：<b>内存是 pinned 的</b>、<b>传输和计算在不同的流</b>、<b>它们访问的缓冲区不冲突</b>。切块大小也有讲究：太小（&lt; 1 MB）被 launch 开销吃掉，太大（&gt; 几十 MB）末尾的尾巴盖不住。经验值 1–16 MB 一块。</p>
+<div class="note">
+<p>默认流（legacy default stream）会和所有其他流隐式同步，等于把并发关掉。要么显式使用非默认流，要么编译时加 <code>--default-stream per-thread</code>，把默认流变成“每线程一个”。</p>
+</div>
+
+<h2>6.4 用事件计时</h2>
+<p>主机计时器会被调度抖动污染，而且 <code>cudaDeviceSynchronize()</code> 之前的代码并不代表 GPU 真的开始/结束。用 CUDA event 在流里打点：</p>
+<pre><code>cudaEvent_t start, stop;
+CK(cudaEventCreate(&amp;start));
+CK(cudaEventCreate(&amp;stop));
+
+CK(cudaEventRecord(start, s));
+for (int i = 0; i &lt; iters; ++i) kernel&lt;&lt;&lt;blocks, 256, 0, s&gt;&gt;&gt;(d, n);
+CK(cudaEventRecord(stop, s));
+CK(cudaEventSynchronize(stop));
+
+float ms = 0.0f;
+CK(cudaEventElapsedTime(&amp;ms, start, stop));
+printf("%.3f ms/iter\n", ms / iters);</code></pre>
+<p>注意循环里不要放同步，否则测到的是“每次 launch + 同步”的和，不是吞吐。事件本身也有约 1–2 µs 的开销，测 5 µs 的 kernel 时要多跑几次取平均。</p>
+
+<h2>6.5 统一内存与 zero-copy</h2>
+<p><code>cudaMallocManaged</code> 返回一块“主机和设备都能访问”的指针，第一次在设备上访问时按页迁移。它省掉了显式拷贝，但：</p>
+<ul>
+<li>首次访问触发页错误，延迟是微秒级，可能比拷贝还慢；</li>
+<li>主机和设备来回访问会反复迁移（抖动）；</li>
+<li>要性能就得手动 <code>cudaMemPrefetchAsync</code> 预取，等于把拷贝又写回来了。</li>
+</ul>
+<p>zero-copy（映射的 pinned 内存）让 GPU 直接通过 PCIe 读主机内存，适合“只读一次、用完就丢”的数据；每次访问都要过 PCIe，延迟高、带宽低。</p>
+<p>GH200 这类用 NVLink-C2C 连接 CPU/GPU 的机器让边界变模糊，但编程模型仍然是分离的：缓存一致性解决的是正确性，不是带宽。</p>
+
+<h2>6.6 多卡</h2>
+<p>多卡的基本操作是“每张卡一个上下文 + 显式指定设备”：</p>
+<pre><code>int can = 0;
+CK(cudaDeviceCanAccessPeer(&amp;can, 1, 0));    // 1 能否直接访问 0 的显存
+if (can) {
+    CK(cudaSetDevice(1));
+    CK(cudaDeviceEnablePeerAccess(0, 0));
+}</code></pre>
+<p>同一台机器上，NVLink 的卡间带宽约 900 GB/s（H100），PCIe 只有 32–64 GB/s。多卡训练/推理的集合通信（all-reduce、all-gather）用 NCCL，不要手写；它会在 NVLink / PCIe / IB 之间自动选路径。</p>
+
+<h2>6.7 和 CPU 的对照</h2>
+<div class="tablewrap"><table class="cmp">
+<thead><tr><th>CPU</th><th>GPU</th><th>差别</th></tr></thead>
+<tbody>
+<tr><td>malloc / free</td><td>cudaMalloc / cudaFree</td><td>后者同步且慢，不能超卖</td></tr>
+<tr><td>memcpy</td><td>cudaMemcpy</td><td>跨 PCIe，同步版本会阻塞主机</td></tr>
+<tr><td>mmap 懒分配</td><td>cudaMallocManaged</td><td>按页迁移，首次访问慢</td></tr>
+<tr><td>page cache</td><td>L2 + shared</td><td>GPU 的缓存小得多，要靠显式复用</td></tr>
+<tr><td>swap</td><td>没有</td><td>显存不够就是硬失败</td></tr>
+<tr><td>线程池</td><td>stream + 多 kernel</td><td>流是队列，不是线程</td></tr>
+</tbody></table></div>
+
+<h2>6.8 容易写错的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li><b>用 pageable 内存做 <code>cudaMemcpyAsync</code>。</b>看起来异步，实际同步且慢；一定要配 pinned。</li>
+<li><b>在主机上解引用设备指针。</b>段错误，或者更糟：读到垃圾。</li>
+<li><b>忘了同步就读主机缓冲区。</b><code>cudaMemcpy</code>（同步版）会等，但 <code>cudaMemcpyAsync</code> + 主机线程直接读不会。</li>
+<li><b>默认流的隐式同步。</b>以为开了多个流就并发了，其实全被默认流串起来。</li>
+<li><b>在热循环里 <code>cudaMalloc</code> / <code>cudaFree</code>。</b>分配是同步的，会毁掉流水线。</li>
+<li><b>忽略错误码。</b>CUDA 的错误是异步的，而且很多是“粘性”的：第一次出错后，后续调用都返回同一个错误，看起来像别处坏了。用 <code>CK</code> 宏在每个调用后检查。</li>
+<li><b>多卡时用错设备上下文。</b>在 device 1 上解引用 device 0 的指针，需要先开 peer access，否则非法。</li>
+</ul>
+</div>
+</article>
+</main>
+<footer>
+<p>为 <code>GPU 编程基础</code> 系列编写 · 公式使用本地 KaTeX 渲染，可离线阅读。</p>
+</footer>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>inferserver 的数学基础：每个公式从头推一遍</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="index">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<p class="crumb"><a href="../index.html">全部文档</a><span class="sep">/</span><span>系列目录</span></p>
+<h1>inferserver 的数学基础</h1>
+<div class="plainbox">
+<p>这一页写给这样的读者：<b>本科数学学过，但计算过程已经记不清了</b>。所以不假设你记得导数表、方差公式、矩阵乘法规则；每用一个概念，就在原地定义并推出来。</p>
+<p>内容只覆盖这个仓库真正用到的数学：softmax、交叉熵 / KL、RMSNorm、线性层、SiLU / SwiGLU、残差、注意力、RoPE、GQA、KV cache、paged attention 的 online softmax、采样、batching 与浮点误差。每一节末尾都标出对应的 Go 代码。</p>
+<p>公式用本地 KaTeX 渲染（<code>assets/katex</code>），断网也能看。整个目录是静态 HTML，直接双击打开即可。</p>
+</div>
+
+<h2>怎么读</h2>
+<ul>
+<li><b>第一次</b>：从第 0 节顺序读到第 14 节。每节都先给定义，再给推导，最后给“容易写错的地方”。</li>
+<li><b>配对代码看</b>：读完一节，打开它末尾标出的 Go 文件；公式和代码行基本一一对应。</li>
+<li><b>查公式</b>：附录 A 是一页表格，列出所有公式和它们在仓库里的位置；附录 B 反过来按文件索引。</li>
+<li><b>想快速建立直觉</b>：先读第 1、7、10、11 节，这四节覆盖了推理服务里最核心的数学。</li>
+</ul>
+
+<h2>章节</h2>
+<ul class="index">
+<li><div class="row"><span class="n">0</span><a href="00-preliminaries.html">记号与预备：内积、矩阵、求和、导数</a></div>
+<p class="note">只定义后面会用到的语言：内积、矩阵乘向量、指数对数、四条求导规则、期望与方差。</p></li>
+
+<li><div class="row"><span class="n">1</span><a href="01-softmax.html">softmax：为什么是指数，为什么先减最大值</a></div>
+<p class="note">从“证据可加、相对概率只看差值”这个要求解函数方程，推出指数形式；再证明减最大值是恒等变形，并给出 Jacobian。含温度滑块 demo。</p></li>
+
+<li><div class="row"><span class="n">2</span><a href="02-cross-entropy-kl.html">交叉熵、KL 散度、困惑度</a></div>
+<p class="note">自信息 → 熵 → 交叉熵 → KL，Gibbs 不等式一行证完；困惑度就是损失的指数。</p></li>
+
+<li><div class="row"><span class="n">3</span><a href="03-rmsnorm.html">RMSNorm：从 LayerNorm 推出来</a></div>
+<p class="note">先验证 LayerNorm 的均值 0 / 方差 1，再说明 RMSNorm 省了什么；尺度不变性与 Jacobian；Qwen3 的 per-head QK-Norm。</p></li>
+
+<li><div class="row"><span class="n">4</span><a href="04-linear-layers.html">线性层、参数量与计算量</a></div>
+<p class="note">矩阵乘向量的 FLOP 计数；把 Qwen3-0.6B 的 0.596B 参数、2.22 GiB fp32 常驻内存、每 token 1.19 GFLOP 逐项算出来。</p></li>
+
+<li><div class="row"><span class="n">5</span><a href="05-silu-swiglu.html">sigmoid、SiLU 与 SwiGLU</a></div>
+<p class="note">sigmoid 的对数几率解释与导数；SiLU 求导；SwiGLU 的门控为什么是逐元素乘。</p></li>
+
+<li><div class="row"><span class="n">6</span><a href="06-residual-prenorm.html">残差连接与 pre-norm</a></div>
+<p class="note">为什么残差能把梯度连乘展开成 2^L 条路径；Qwen3 两条残差的准确数据流。</p></li>
+
+<li><div class="row"><span class="n">7</span><a href="07-attention.html">注意力：点积、缩放、因果掩码</a></div>
+<p class="note">点积的方差是 d，所以除以 √d；因果掩码为什么必须加在 softmax 之前；输出是 V 的凸组合；prefill 二次、decode 线性。</p></li>
+
+<li><div class="row"><span class="n">8</span><a href="08-rope.html">RoPE：旋转位置编码为什么是相对的</a></div>
+<p class="note">旋转矩阵保持长度；证明内积只依赖 n−m；频率的几何级数；HF 的 rotate_half 与劈半配对为什么等价。</p></li>
+
+<li><div class="row"><span class="n">9</span><a href="09-gqa.html">GQA：多个 Q 头共用一个 K/V 头</a></div>
+<p class="note">h/G 的映射；省的是 KV 内存和 K/V 投影，不是注意力 FLOPs；224 KiB/token 的来历。</p></li>
+
+<li><div class="row"><span class="n">10</span><a href="10-kv-cache.html">KV cache：自回归分解与增量解码</a></div>
+<p class="note">链式法则展开；无 cache 是 O(T³)，有 cache 是 O(T²)；三种 KV 实现的取舍与内存账。</p></li>
+
+<li><div class="row"><span class="n">11</span><a href="11-paged-attention.html">Paged attention 与 online softmax</a></div>
+<p class="note">块表地址公式；online softmax 的合并为什么数学上恒等；引用计数与写时复制。</p></li>
+
+<li><div class="row"><span class="n">12</span><a href="12-sampling.html">采样：温度、top-k、top-p、逆变换</a></div>
+<p class="note">温度的两种极限；top-k 等价于子集重归一化；top-p 的自适应截断；逆变换采样为什么按累积概率就对。</p></li>
+
+<li><div class="row"><span class="n">13</span><a href="13-batching.html">批处理、padding、chunked prefill</a></div>
+<p class="note">算术强度 B/2 说明 decode 是带宽受限；padding 浪费；chunked prefill 不减少总 FLOPs，优化的是公平性。</p></li>
+
+<li><div class="row"><span class="n">14</span><a href="14-floating-point.html">浮点数与误差：为什么容差是 1e-6</a></div>
+<p class="note">float32 的 epsilon；四类误差来源；怎么用相对误差判断“是舍入还是公式错了”。</p></li>
+
+<li><div class="row"><span class="n">A</span><a href="a-cheatsheet.html">附录 A. 公式速查表</a></div>
+<p class="note">一页表格：每个公式 + 它在仓库里的文件与函数。</p></li>
+
+<li><div class="row"><span class="n">B</span><a href="b-code-index.html">附录 B. 数学 ↔ 代码索引</a></div>
+<p class="note">反过来按代码文件索引数学概念，末尾是整条前向公式链。</p></li>
+</ul>
+
+<h2>符号约定</h2>
+<div class="tablewrap"><table class="sym">
+<thead><tr><th>符号</th><th>含义</th><th>本项目的值（Qwen3-0.6B）</th></tr></thead>
+<tbody>
+<tr><td>\(h\)</td><td>隐藏维度 hidden_size</td><td>1024</td></tr>
+<tr><td>\(L\)</td><td>层数</td><td>28</td></tr>
+<tr><td>\(H,\ H_{kv}\)</td><td>Q 头数 / KV 头数</td><td>16 / 8</td></tr>
+<tr><td>\(d\)</td><td>每头维度 head_dim</td><td>128</td></tr>
+<tr><td>\(V\)</td><td>词表大小</td><td>151936</td></tr>
+<tr><td>\(B\)</td><td>每块 token 数（分页）</td><td>基准代码用 16</td></tr>
+<tr><td>\(T\)</td><td>序列长度</td><td>—</td></tr>
+<tr><td>\(\epsilon\)</td><td>归一化的数值稳定项</td><td>\(10^{-6}\)</td></tr>
+<tr><td>\(\theta_{\text{base}}\)</td><td>RoPE 频率基数</td><td>\(10^6\)</td></tr>
+</tbody></table></div>
+<p class="note">数学公式里下标从 1 开始，Go 代码从 0 开始。看到 \(i\) 与 \(i+1\) 的差异时，先确认是哪种约定。</p>
+
+<footer>
+<p>为 <code>inferserver</code> 编写 · 17 篇独立章节 · 公式使用本地 KaTeX 渲染，可离线阅读。</p>
+<p>配套阅读：<a href="../gpu/index.html">GPU 编程基础</a>（同一批概念的硬件视角）；<code>inferserver</code> 侧的 README、FORWARD.md、DESIGN_BATCHING.md 与代码一一对应。</p>
+</footer>
+</article>
+</main>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

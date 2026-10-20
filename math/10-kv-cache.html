@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>10. KV cache：自回归分解与增量解码 · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="10-kv-cache.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s10">10. KV cache：自回归分解与增量解码</h1>
+
+<h2>10.1 自回归分解</h2>
+<p>链式法则（条件概率定义 \(p(B\mid A)=p(A,B)/p(A)\)）反复使用：</p>
+\[
+p(x_1,\dots,x_T)=p(x_1)\prod_{t=2}^{T}p(x_t\mid x_1,\dots,x_{t-1})
+=\prod_{t=1}^{T}p(x_t\mid x_{&lt;t}).
+\]
+<p>所以生成第 \(t\) 个 token 只需要“前 \(t-1\) 个 token”的条件分布。模型每步输出整个词表的 logits，采样一个 token，再把它接到序列末尾。</p>
+
+<h2>10.2 没有 cache 时有多贵</h2>
+<p>第 \(t\) 步如果从头重算，注意力要处理长度 \(t\)，成本 \(O(t^2d)\)。生成 \(T\) 个 token 的总成本</p>
+\[
+\sum_{t=1}^{T}O(t^2d)=O(T^3d),
+\]
+<p>因为 \(\sum_{t=1}^T t^2=\frac{T(T+1)(2T+1)}{6}\sim\frac{T^3}{3}\)。有 KV cache 时：prefill 一次 \(O(T^2d)\)，之后每步只算 1 个 query，\(O(Td)\)，总计</p>
+\[
+O(T^2d)+T\cdot O(Td)=O(T^2d).
+\]
+<p>从三次降到二次。生成越长，差距越大。</p>
+
+<h2>10.3 cache 里存什么</h2>
+<p>每层、每个 KV 头、每个历史位置存一个 K 向量和一个 V 向量，维度 \(d\)。第 \(t\) 步来了新 token，只 append 新的 \(k_t,v_t\)，然后让 \(q_t\) 和全部 \(K_{1:t}\) 做点积。</p>
+<p>内存公式（<a href="09-gqa.html">第 9 节</a>已出现）：</p>
+\[
+\text{bytes/token}=2\cdot L\cdot H_{kv}\cdot d\cdot 4 .
+\]
+<p>0.6B 是 224 KiB/token：2048 token 约 448 MiB；40960 token（模型最大位置）约</p>
+\[
+229{,}376\times40{,}960=9{,}395{,}240{,}960\text{ B}\approx8.75\text{ GiB}.
+\]
+<p>这就是为什么需要 paged KV：如果每个请求都按最大长度预分配，显存/内存会被瞬间吃光。</p>
+
+<h2>10.4 三种 KV 实现</h2>
+<ul>
+<li><code>NaiveKV</code>：每次 append 都重新分配、复制全部历史。语义最直白，适合当正确性基准，但复杂度 \(O(T^2)\) 的复制。</li>
+<li><code>CacheKV</code>：按 <code>maxSeq</code> 预分配一整块，append 只写指针位置。快，但每个序列都占满最大长度。</li>
+<li><code>PagedKV</code>：按固定大小 \(B\) 的块分配，逻辑位置通过 block table 映射到物理块。按需增长，支持共享（<a href="11-paged-attention.html">第 11 节</a>）。</li>
+</ul>
+<p><b>对应代码</b>：<code>model/kv.go</code>、<code>model/pagedkv.go</code>；内存公式在 <code>model/kv.go</code> 的 <code>BytesPerToken</code>。</p>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+/* GPU 编程基础 —— 在 assets/css/math.css 之上补的少量样式（仅浅色模式） */
+
+/* 代码块上方的文件名 / 编译命令说明 */
+.file{margin:1.25em 0 -.7em;font:600 12px/1.5 var(--mono);color:var(--muted);letter-spacing:.02em}
+.file+pre{margin-top:.6em}
+
+/* ASCII 结构图：不要实心底色，用虚线表示“示意” */
+pre.fig{background:transparent;border:1px dashed var(--rule);color:var(--ink-soft);
+  font-size:12px;line-height:1.55}
+
+/* 对照表第一列固定为名词，不要换行 */
+table.cmp td:first-child{white-space:nowrap;font-weight:600}
+
+@media print{
+  .file{break-after:avoid}
+  pre{break-inside:avoid}
+}

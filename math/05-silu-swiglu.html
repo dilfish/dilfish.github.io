@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>5. sigmoid、SiLU 与 SwiGLU · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="05-silu-swiglu.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s5">5. sigmoid、SiLU 与 SwiGLU</h1>
+
+<h2>5.1 sigmoid：把实数压到 (0,1)</h2>
+<p>定义</p>
+\[
+\sigma(x)=\frac{1}{1+e^{-x}} .
+\]
+<p>它有几个立刻能看出的性质：\(x\to+\infty\) 时 \(e^{-x}\to0\)，\(\sigma\to1\)；\(x\to-\infty\) 时 \(\sigma\to0\)；\(\sigma(0)=1/2\)；且 \(\sigma(-x)=1-\sigma(x)\)（分子分母同乘 \(e^x\) 可验证）。</p>
+<p>它还是“对数几率”的反函数：若 \(p=\sigma(x)\)，则</p>
+\[
+\frac{p}{1-p}=\frac{1/(1+e^{-x})}{e^{-x}/(1+e^{-x})}=e^{x},
+\qquad x=\ln\frac{p}{1-p}.
+\]
+<p>所以 sigmoid 把“logit”变成“概率”，和 softmax 在二分类时完全一致。</p>
+
+<h2>5.2 sigmoid 的导数</h2>
+<p>用链式法则，外层是 \(u^{-1}\)，内层 \(u=1+e^{-x}\)：</p>
+\[
+\frac{d\sigma}{dx}=-(1+e^{-x})^{-2}\cdot(-e^{-x})
+=\frac{e^{-x}}{(1+e^{-x})^2}.
+\]
+<p>而 \(1-\sigma=\dfrac{e^{-x}}{1+e^{-x}}\)，所以</p>
+\[
+\boxed{\sigma'(x)=\sigma(x)\big(1-\sigma(x)\big).}
+\]
+<p>这个形式非常省事：算过一次 \(\sigma\)，导数只需一次乘法。</p>
+
+<h2>5.3 SiLU：\(x\) 乘上自己的门</h2>
+<p>SiLU（也叫 swish）定义为</p>
+\[
+\operatorname{SiLU}(x)=x\,\sigma(x)=\frac{x}{1+e^{-x}} .
+\]
+<p>它和 ReLU 的区别：负半轴不是硬的 0，而是一条平滑的负值小尾巴；在 \(x\approx-1.278\) 处取最小值约 \(-0.278\)，然后趋于 0。这个“非单调”是故意的，让梯度在负区也有信息。</p>
+<p>导数用乘积法则：</p>
+\[
+\frac{d}{dx}\big(x\sigma(x)\big)=\sigma(x)+x\sigma'(x)
+=\sigma(x)+x\sigma(x)\big(1-\sigma(x)\big)
+=\sigma(x)\big(1+x(1-\sigma(x))\big).
+\]
+<p>代码里只在前向用它，不手写导数；但知道它处处可导，能解释为什么比 ReLU 平滑。</p>
+
+<h2>5.4 SwiGLU：门控 MLP</h2>
+<p>普通两层 MLP 是 \(W_2\,\phi(W_1x)\)。SwiGLU 用两条并行的投影，一条当“门”，一条当“内容”，逐元素相乘：</p>
+\[
+\boxed{\operatorname{MLP}(x)=W_{\text{down}}\Big(\operatorname{SiLU}(W_{\text{gate}}x)\odot(W_{\text{up}}x)\Big).}
+\]
+<p>\(\odot\) 是逐元素乘。为什么这样设计？逐元素乘法让每个中间维度的“开关”由输入动态决定：\(\operatorname{SiLU}(g_i)\) 大就放行 \(u_i\)，小就抑制。它比固定非线性多了一次乘法的交互能力。</p>
+<p>维度：\(W_{\text{gate}},W_{\text{up}}\in\mathbb{R}^{3072\times1024}\)，\(W_{\text{down}}\in\mathbb{R}^{1024\times3072}\)。三个矩阵共 \(9{,}437{,}184\) 参数，比“两个 \(4096\times1024\) 矩阵”的经典 4 倍 MLP（8.4M）略大，这是 SwiGLU 常见的 \(8/3\) 倍宽度调整。</p>
+<div class="warn"><span class="tag">顺序不能换</span>
+<p>是 <code>SiLU(gate) * up</code>，不是相加，也不是 <code>SiLU(up) * gate</code>。形状都对、代码不报错，但数值完全不同。</p>
+</div>
+<p><b>对应代码</b>：<code>model/mlp.go</code> 的 <code>MLP</code>，<code>model/tensor.go</code> 的 <code>SiLU</code>。</p>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>12. 采样：温度、top-k、top-p、逆变换 · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="12-sampling.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s12">12. 采样：温度、top-k、top-p、逆变换</h1>
+<p>模型给出 logits，采样决定“下一个 token 怎么选”。仓库里的顺序是：温度 → top-k → softmax → top-p → 抽一个。</p>
+
+<h2>12.1 温度：把 logits 除以 T</h2>
+<p>定义</p>
+\[
+p_i(T)=\frac{e^{z_i/T}}{\sum_j e^{z_j/T}},\qquad T>0 .
+\]
+<p>两个极限：</p>
+<ul>
+<li>\(T\to0^+\)：设 \(z_{\max}\) 是唯一最大值。分子分母同除 \(e^{z_{\max}/T}\)：
+\[
+p_i=\frac{e^{(z_i-z_{\max})/T}}{1+\sum_{j\ne\max}e^{(z_j-z_{\max})/T}} .
+\]
+所有 \(z_j-z_{\max}&lt;0\)，指数趋于 0，所以 \(p_{\max}\to1\)，其余趋于 0。温度趋近 0 就是 argmax（贪心）。</li>
+<li>\(T\to\infty\)：\(z_i/T\to0\)，所有分子趋于 1，\(p_i\to1/V\)，均匀分布。</li>
+</ul>
+<p>温度越小越“尖”，越大越“平”。注意 \(T\) 不改变排序，只改变概率的集中程度；所以 top-k 的集合与 \(T\) 无关（但 top-p 的截断集合会变）。</p>
+
+<h2>12.2 top-k：只留最大的 k 个</h2>
+<p>把第 \(k+1\) 名及以后的 logits 设为 \(-\infty\)，再 softmax。因为 \(e^{-\infty}=0\)，这些位置概率精确为 0；剩下 \(k\) 个的分子不变，分母只剩这 \(k\) 项，等价于在子集上重新归一化：</p>
+\[
+p_i=\frac{e^{z_i}}{\sum_{j\in\text{top-}k}e^{z_j}},\qquad i\in\text{top-}k .
+\]
+<p>它固定了候选数量，避免从长尾里抽到离谱 token。缺点是 \(k\) 不随分布形状变化：分布很尖时 \(k\) 太大，很平时 \(k\) 太小。</p>
+
+<h2>12.3 top-p（nucleus）：按累积概率截断</h2>
+<p>把概率从大到小排序 \(p_{(1)}\ge p_{(2)}\ge\cdots\)。找到最小的 \(m\) 使得</p>
+\[
+\sum_{j=1}^{m}p_{(j)}\ge p,
+\]
+<p>只保留前 \(m\) 个，再除以它们的和 \(S_m=\sum_{j=1}^m p_{(j)}\)：</p>
+\[
+\tilde p_{(j)}=\frac{p_{(j)}}{S_m},\quad j\le m;\qquad \tilde p_{(j)}=0,\quad j>m .
+\]
+<p>因为 \(S_m\ge p\)，保留的集合至少覆盖 \(p\) 的概率质量；分布尖时 \(m\) 很小，分布平时 \(m\) 自动变大。这就是“核采样”的自适应之处。</p>
+<p>代码里的循环是“累加、把当前项放进去、如果累计 \(\ge p\) 就停”，所以 \(m\) 是<b>第一个让累计跨过 p 的位置</b>，包含跨过门槛的那一项。</p>
+
+<h2>12.4 逆变换采样：为什么按累积概率就能抽对</h2>
+<p>设 \(u\sim U[0,1)\)，累积分布 \(C_i=\sum_{j=1}^{i}p_j\)，定义 \(X=\min\{i:u&lt;C_i\}\)。那么</p>
+\[
+\mathbb{P}(X=i)=\mathbb{P}(C_{i-1}\le u&lt;C_i)=C_i-C_{i-1}=p_i,
+\]
+<p>因为 \(u\) 落在长度 \(p_i\) 的区间里的概率就是区间长度。实现上就是从前往后累加，第一次超过 \(u\) 就返回。这是“按概率抽一个”的标准做法，不需要额外的随机数分布。</p>
+
+<h2>12.5 本项目的实现细节</h2>
+<ul>
+<li><code>temp&lt;=0</code> 直接取 argmax，不消耗随机数，所以贪心结果和 seed 无关；并列时取第一个最大值。</li>
+<li>概率累加用 float64，避免 15 万维求和时的 float32 误差。</li>
+<li>top-k 在 logits 上做（设 \(-\infty\)），然后 softmax；top-p 在概率上做，再归一化。</li>
+<li>全部被 mask 时（全是 \(-\infty\)），softmax 返回全 0，采样会 panic 而不是返回 NaN；这是有意的快速失败。</li>
+<li>logprobs 是原始分布（\(T=1\)、不截断），和采样分布不同；不要拿采样后的概率去当 logprobs。</li>
+</ul>
+<p><b>对应代码</b>：<code>model/sample.go</code> 的 <code>SampleLogits</code> / <code>Sample</code> / <code>topKFloat64</code> / <code>topPFloat64</code> / <code>sampleOneFloat64</code>。</p>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

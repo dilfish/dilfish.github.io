@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>14. 浮点数与误差：为什么容差是 1e-6 · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="14-floating-point.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s14">14. 浮点数与误差：为什么容差是 1e-6</h1>
+
+<h2>14.1 float32 的精度</h2>
+<p>IEEE-754 float32：1 位符号、8 位指数、23 位尾数。规格化数的有效位数是 24 位（隐含前导 1），所以 1.0 附近的机器 epsilon 是</p>
+\[
+\varepsilon_{\text{mach}}=2^{-23}\approx1.19\times10^{-7},
+\]
+<p>而单次舍入的单位 roundoff 是 \(u=2^{-24}\approx5.96\times10^{-8}\)。粗略地说，float32 能保证 7 位十进制有效数字。</p>
+<p>bf16 只有 7 位尾数（+1 隐含位 = 8 位），roundoff 是 \(2^{-9}\approx0.002\)，精度差很多，但指数范围和 float32 一样。Qwen3 权重以 bf16 存储，计算时转成 float32，所以“权重精度”和“累加精度”是两件事。</p>
+
+<h2>14.2 误差从哪来</h2>
+<ul>
+<li><b>舍入</b>：每次加法/乘法都可能丢低位。\(n\) 项求和的误差最坏按 \(n\varepsilon\) 增长，随机误差按 \(\sqrt n\varepsilon\) 增长。</li>
+<li><b>灾难性抵消</b>：两个相近的大数相减，有效位被吃掉。例如方差用 \(\mathbb{E}[x^2]-(\mathbb{E}x)^2\) 在均值很大时不可靠；两遍法（先算均值再算偏差平方）更稳。</li>
+<li><b>溢出/下溢</b>：\(e^{89}\) 溢出，\(e^{-100}\) 下溢为 0。log-sum-exp 和“减最大值”就是为此。</li>
+<li><b>顺序不同</b>：浮点加法不满足结合律，\((a+b)+c\ne a+(b+c)\)。所以“分块 online softmax”和“一次性 softmax”不可能逐位相等，只能要求相对误差。</li>
+</ul>
+
+<h2>14.3 本项目为什么用 1e-6</h2>
+<p>跨实现对比（Go vs HuggingFace/PyTorch）时，累加顺序、向量化指令、float64 中间量都不同，逐位相等不现实。仓库的验收用<b>相对误差</b></p>
+\[
+\text{rel}=\frac{\|a-b\|}{\|b\|},
+\]
+<p>阈值取 \(10^{-6}\)；实际 tiny 模型上约 \(10^{-7}\)，真实 0.6B 上约 \(10^{-5}\sim10^{-6}\)（见 <code>inferserver</code> 的 FORWARD.md §8.3）。如果一个“看起来很小”的误差出现在关键张量上（比如 embed 不是精确 0），通常说明权重加载或 dtype 转换错了，而不是浮点噪声。</p>
+<div class="key"><span class="tag">实用判断</span>
+<p>相对误差 \(10^{-7}\) 量级：正常舍入；\(10^{-3}\) 量级：多半是公式/索引错了；符号相反或量级差很多：接线错误。不要用“输出还能看”来判断正确性——LLM 对很多错误非常宽容。</p>
+</div>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

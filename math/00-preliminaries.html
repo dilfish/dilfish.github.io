@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>0. 记号与预备：内积、矩阵、求和、导数 · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="00-preliminaries.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s0">0. 记号与预备：内积、矩阵、求和、导数</h1>
+<p>这一节不是“复习”，而是把后面要用的语言一次定义清楚。看不懂的地方可以跳过，遇到时再回来查。</p>
+
+<h2>0.1 向量、内积、范数</h2>
+<p>向量 \(x\in\mathbb{R}^n\) 就是一列数 \(x=(x_1,\dots,x_n)\)。两个向量的<b>内积</b>（点积）定义为逐项相乘再相加：</p>
+\[
+\langle x,y\rangle \;=\; x\cdot y \;=\; \sum_{i=1}^{n} x_i y_i .
+\]
+<p>内积衡量“方向有多一致”：同向为正、垂直为 0、反向为负。向量的<b>欧氏长度</b>（\(L_2\) 范数）是它和自己的内积开根号：</p>
+\[
+\|x\|_2=\sqrt{\langle x,x\rangle}=\sqrt{\sum_i x_i^2}.
+\]
+<p>后面还会遇到“均方根”，它只是把平方平均再开根号：</p>
+\[
+\operatorname{RMS}(x)=\sqrt{\frac{1}{n}\sum_{i=1}^{n}x_i^2}.
+\]
+<p>注意 \(\operatorname{RMS}\) 和 \(\|x\|_2\) 只差一个 \(\sqrt{n}\) 因子：\(\operatorname{RMS}(x)=\|x\|_2/\sqrt{n}\)。这个关系在 RMSNorm 那节会直接用。</p>
+
+<h2>0.2 矩阵乘向量：一行一个内积</h2>
+<p>矩阵 \(W\in\mathbb{R}^{m\times n}\) 有 \(m\) 行 \(n\) 列，\(W_{ij}\) 表示第 \(i\) 行第 \(j\) 列。它作用在向量 \(x\in\mathbb{R}^n\) 上得到 \(y\in\mathbb{R}^m\)：</p>
+\[
+y_i=\sum_{j=1}^{n}W_{ij}x_j=\langle W_{i,:},\,x\rangle .
+\]
+<p>也就是说：<b>输出的第 \(i\) 个分量，是 W 的第 \(i\) 行和 x 的内积</b>。这就是为什么代码里一个矩阵乘向量可以写成“对每一行做点积”。</p>
+<p>转置 \(W^\top\) 是把行列互换：\((W^\top)_{ij}=W_{ji}\)。由定义可以直接验证：</p>
+\[
+(AB)^\top=B^\top A^\top ,
+\]
+<p>因为左边第 \((i,j)\) 项是 \((AB)_{ji}=\sum_k A_{jk}B_{ki}\)，右边是 \(\sum_k (B^\top)_{ik}(A^\top)_{kj}=\sum_k B_{ki}A_{jk}\)，逐项相等。</p>
+<p>HuggingFace 的 <code>Linear</code> 层存的是 \([out,in]\) 形状的权重，计算 \(y=xW^\top\)。展开就是 \(y_i=\sum_j x_j W_{ij}\)，和上面的 \(Wx\) 完全一样，只是把“行”当成了输出下标。仓库里 <code>MatVec</code> 的注释说的就是这件事。</p>
+
+<h2>0.3 求和、指数、对数</h2>
+<p>\(\sum_{i=1}^{n}a_i=a_1+\cdots+a_n\)。三条常用的指数/对数恒等式：</p>
+\[
+e^{a+b}=e^a e^b,\qquad \ln(ab)=\ln a+\ln b,\qquad \ln(a^b)=b\ln a .
+\]
+<p>另外 \(\ln\) 和 \(e^x\) 互为反函数：\(\ln(e^x)=x\)，\(e^{\ln x}=x\)（\(x>0\)）。\(\ln 1=0\)，\(\ln e=1\)。</p>
+
+<h2>0.4 导数：只用到四条规则</h2>
+<p>后面所有推导只依赖这四条：</p>
+<ol>
+<li><b>幂函数</b>：\(\dfrac{d}{dx}x^n=nx^{n-1}\)。</li>
+<li><b>指数</b>：\(\dfrac{d}{dx}e^x=e^x\)。</li>
+<li><b>链式法则</b>：若 \(y=f(u)\)、\(u=g(x)\)，则 \(\dfrac{dy}{dx}=f'(u)\,g'(x)\)。写成微分形式就是 \(dy=f'(u)\,du\)。</li>
+<li><b>乘积法则</b>：\((fg)'=f'g+fg'\)；<b>商法则</b>：\(\left(\dfrac{f}{g}\right)'=\dfrac{f'g-fg'}{g^2}\)。</li>
+</ol>
+<p>例：\(\dfrac{d}{dx}e^{-x}=e^{-x}\cdot(-1)=-e^{-x}\)（链式法则，外层 \(e^u\)，内层 \(u=-x\)）。这个结果在 sigmoid 那节会反复用。</p>
+
+<h2>0.5 期望与方差：两个定义就够</h2>
+<p>离散随机变量 \(X\) 以概率 \(p_i\) 取值 \(a_i\)，则</p>
+\[
+\mathbb{E}[X]=\sum_i p_i a_i,\qquad
+\operatorname{Var}(X)=\mathbb{E}\big[(X-\mathbb{E}X)^2\big]=\mathbb{E}[X^2]-(\mathbb{E}X)^2 .
+\]
+<p>第二个等号展开即可：\(\mathbb{E}[(X-\mu)^2]=\mathbb{E}[X^2-2\mu X+\mu^2]=\mathbb{E}[X^2]-2\mu^2+\mu^2\)。若 \(X,Y\) 独立，则 \(\mathbb{E}[XY]=\mathbb{E}X\,\mathbb{E}Y\)，且 \(\operatorname{Var}(X+Y)=\operatorname{Var}X+\operatorname{Var}Y\)。注意：<b>方差可加要求独立</b>，这条在注意力缩放那节是关键的。</p>
+
+<div class="warn"><span class="tag">约定</span>
+<p>数学里下标习惯从 1 开始，Go 代码从 0 开始。本页公式用 1-based；代码片段保留 0-based。看到 \(i\) 和 \(i+1\) 的差别时，先看是哪种约定。</p>
+</div>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

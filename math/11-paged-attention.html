@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>11. Paged attention 与 online softmax · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="11-paged-attention.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s11">11. Paged attention 与 online softmax</h1>
+
+<h2>11.1 块表：把逻辑位置翻译成物理地址</h2>
+<p>把序列按 \(B\) 个 token 一块切开。逻辑位置 \(p\)（从 0 开始）落在</p>
+\[
+\ell_b=\left\lfloor\frac{p}{B}\right\rfloor,\qquad
+\text{slot}=p\bmod B .
+\]
+<p>第 \(\ell\) 层第 \(\ell_b\) 个逻辑块对应的物理块号存在 block table 里：\(\text{phys}=\text{table}[\ell][\ell_b]\)。物理块在池子里，池子按 \(B\times \text{kvDim}\) 连续排列，于是这个位置的 K 向量起始偏移是</p>
+\[
+\text{offset}=\text{phys}\cdot B\cdot \text{kvDim}+\text{slot}\cdot\text{kvDim}.
+\]
+<p>再乘上 4 字节（float32）就是字节地址。逻辑上连续的序列，物理上可以散落在任意块里。</p>
+<p>一个长度 \(T\) 的序列每层需要 \(\lceil T/B\rceil\) 个块，所有层共 \(L\lceil T/B\rceil\) 个块。池子总字节：</p>
+\[
+\text{numBlocks}\times B\times 2\times \text{kvDim}\times4 .
+\]
+<p>例：\(B=16\)、\(T=100\)、\(L=28\)、kvDim=1024。每层 7 块，共 196 块；每块 \(16\times2\times1024\times4=131{,}072\) B=128 KiB；合计约 24.5 MiB。最后一个块只用了 4 个 slot，内部碎片最多 \(B-1\) 个 token/层。</p>
+
+<h2>11.2 为什么需要 online softmax</h2>
+<p>标准注意力要先看到全部分数才能算 \(\max\) 和 \(\sum e^{s_j-m}\)。但分页后 K/V 分散在多个块里，如果先把所有块 gather 成连续数组，就退回了 \(O(T)\) 的复制（stage A 的做法）。stage B 想“边读块边算”，于是需要一个可以<b>分块合并</b>的 softmax。</p>
+<p>设全局最大值 \(m\)，未归一化累加器</p>
+\[
+l=\sum_j e^{s_j-m},\qquad o=\sum_j e^{s_j-m}v_j,
+\]
+<p>最终输出是 \(o/l\)。对一个新块 \(b\)，块内最大值 \(m_b\)，块内统计</p>
+\[
+l_b=\sum_{j\in b}e^{s_j-m_b},\qquad o_b=\sum_{j\in b}e^{s_j-m_b}v_j .
+\]
+<p>合并时取 \(m_{\text{new}}=\max(m,m_b)\)，把旧状态和新块都缩放到同一个基准：</p>
+\[
+\boxed{
+\begin{aligned}
+o_{\text{new}}&=o\,e^{m-m_{\text{new}}}+o_b\,e^{m_b-m_{\text{new}}},\\
+l_{\text{new}}&=l\,e^{m-m_{\text{new}}}+l_b\,e^{m_b-m_{\text{new}}}.
+\end{aligned}}
+\]
+<p>为什么对？把右边展开，\(o_{\text{new}}\) 的每一项都是 \(e^{s_j-m_{\text{new}}}v_j\)：旧项乘 \(e^{m-m_{\text{new}}}\) 后是 \(e^{s_j-m}e^{m-m_{\text{new}}}=e^{s_j-m_{\text{new}}}\)，新块同理。所以合并后正好是“以 \(m_{\text{new}}\) 为基准的全局累加器”。最终 \(o/l\) 与一次性 softmax 完全相等（只差浮点舍入）。</p>
+<p>数值稳定：两个指数都 \(\le0\)，不会溢出；第一个块之前 \(m=-\infty\)，\(e^{-\infty}=0\)，旧状态自然清零。</p>
+<div class="key"><span class="tag">一句话</span>
+<p>softmax 可以“分块做、再合并”，因为指数乘法可以拆成“先按块内最大值缩放，再乘回全局修正因子”。这就是 flash attention / paged attention 的数学核心。</p>
+</div>
+
+<h2>11.3 块共享与写时复制</h2>
+<p>如果两个序列有相同前缀，它们的 block table 可以指向同一批物理块，节省内存。代价是：共享块必须<b>只读</b>。当某个序列要往共享块里写新 token 时，先分配一个新块、把旧内容复制过去（copy-on-write），再改新块。</p>
+<p>用引用计数管理：<code>refs[p]</code> 表示有多少个 block table / 前缀缓存指向物理块 \(p\)。分配时 <code>refs=1</code>，共享时 <code>refs++</code>，释放时 <code>refs--</code>；只有减到 0 才真正回到空闲栈。这样“释放一个仍被共享的块”只是撤掉自己那一份引用，不会破坏别人的数据。</p>
+<p><b>对应代码</b>：<code>model/pagedattn.go</code> 的 <code>attentionPaged</code>（合并公式在 <code>mNew / corrOld / corrB</code> 那几行），<code>model/pagedkv.go</code> 的 <code>BlockManager</code> / <code>PagedKV</code>。</p>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>
