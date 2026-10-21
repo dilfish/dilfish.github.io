@@ -21,12 +21,13 @@
 <div class="plainbox">
 <p>这一页写给这样的读者：<b>本科数学学过，但计算过程已经记不清了</b>。所以不假设你记得导数表、方差公式、矩阵乘法规则；每用一个概念，就在原地定义并推出来。</p>
 <p>内容只覆盖这个仓库真正用到的数学：softmax、交叉熵 / KL、RMSNorm、线性层、SiLU / SwiGLU、残差、注意力、RoPE、GQA、KV cache、paged attention 的 online softmax、采样、batching 与浮点误差。每一节末尾都标出对应的 Go 代码。</p>
+<p>第 15 节是补章：奇异值分解。它不属于每个 token 都要算的公式，但解释了 LoRA 的低秩增量、KV cache 压缩、谱范数误差估计背后共用的那条假设，所以单独讲一遍。</p>
 <p>公式用本地 KaTeX 渲染（<code>assets/katex</code>），断网也能看。整个目录是静态 HTML，直接双击打开即可。</p>
 </div>
 
 <h2>怎么读</h2>
 <ul>
-<li><b>第一次</b>：从第 0 节顺序读到第 14 节。每节都先给定义，再给推导，最后给“容易写错的地方”。</li>
+<li><b>第一次</b>：从第 0 节顺序读到第 15 节。每节都先给定义，再给推导，最后给“容易写错的地方”。</li>
 <li><b>配对代码看</b>：读完一节，打开它末尾标出的 Go 文件；公式和代码行基本一一对应。</li>
 <li><b>查公式</b>：附录 A 是一页表格，列出所有公式和它们在仓库里的位置；附录 B 反过来按文件索引。</li>
 <li><b>想快速建立直觉</b>：先读第 1、7、10、11 节，这四节覆盖了推理服务里最核心的数学。</li>
@@ -79,6 +80,9 @@
 <li><div class="row"><span class="n">14</span><a href="14-floating-point.html">浮点数与误差：为什么容差是 1e-6</a></div>
 <p class="note">float32 的 epsilon；四类误差来源；怎么用相对误差判断“是舍入还是公式错了”。</p></li>
 
+<li><div class="row"><span class="n">15</span><a href="15-svd.html">奇异值分解：几何直觉、手算过程与低秩近似</a></div>
+<p class="note">矩阵 = 转一次 + 沿正交方向拉伸 + 再转一次；从几何图像推出 \(A=U\Sigma V^\top\)；手算一个 \(3\times2\) 例子；Eckart–Young 与截断误差；PCA、伪逆、零空间都是它的推论。</p></li>
+
 <li><div class="row"><span class="n">A</span><a href="a-cheatsheet.html">附录 A. 公式速查表</a></div>
 <p class="note">一页表格：每个公式 + 它在仓库里的文件与函数。</p></li>
 
@@ -103,7 +107,7 @@
 <p class="note">数学公式里下标从 1 开始，Go 代码从 0 开始。看到 \(i\) 与 \(i+1\) 的差异时，先确认是哪种约定。</p>
 
 <footer>
-<p>为 <code>inferserver</code> 编写 · 17 篇独立章节 · 公式使用本地 KaTeX 渲染，可离线阅读。</p>
+<p>为 <code>inferserver</code> 编写 · 18 篇独立章节 · 公式使用本地 KaTeX 渲染，可离线阅读。</p>
 <p>配套阅读：<a href="../gpu/index.html">GPU 编程基础</a>（同一批概念的硬件视角）；<code>inferserver</code> 侧的 README、FORWARD.md、DESIGN_BATCHING.md 与代码一一对应。</p>
 </footer>
 </article>

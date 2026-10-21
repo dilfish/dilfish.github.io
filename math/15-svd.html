@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>15. 奇异值分解：几何直觉、手算过程与低秩近似 · inferserver 数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+</head>
+<body data-page="15-svd.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">inferserver 的数学基础</a>
+</header>
+<main>
+<article>
+<h1 id="s15">15. 奇异值分解：几何直觉、手算过程与低秩近似</h1>
+
+<h2>15.1 为什么这一章在这里</h2>
+<p>前面 14 节覆盖的都是推理服务里逐行出现的公式：softmax、RMSNorm、注意力、浮点误差。奇异值分解（singular value decomposition，SVD）不属于「每个 token 都要算一遍」的那类公式，但它解释了后面会反复借用的一件事：<b>一个矩阵的「有效维度」可以比它的形状小得多</b>。</p>
+<p>具体一点：</p>
+<ul>
+<li><b>低秩适配（LoRA）</b>：微调时不让 \(W\in\mathbb{R}^{m\times n}\) 自由变化，而是只学一个秩为 \(r\)（比如 8 或 16）的增量 \(\Delta W=BA\)，\(B\in\mathbb{R}^{m\times r}\)、\(A\in\mathbb{R}^{r\times n}\)。整个技巧成立的前提是「真实的任务增量近似低秩」。</li>
+<li><b>KV cache 的压缩与写入成本</b>：讨论 cache 能不能压、压多少时，通常先用 SVD 看 KV 矩阵的奇异值衰减速度，衰减快才谈得上截断。</li>
+<li><b>量化与误差</b>：谱范数 \(\sigma_1\) 是「矩阵最多能把向量拉长多少倍」，它是把逐元素误差换算成输出误差时最常用的那把尺子。</li>
+</ul>
+<p>所以这一章不追代码行号，而是把 SVD 本身讲透：先建立几何图像，再从图像推出定义，然后手算一个 \(3\times2\) 的例子，最后用代码验证「截断」到底丢了多少东西。</p>
+
+<h2>15.2 矩阵是线性变换：列就是基向量的像</h2>
+<p>线性代数课上通常把 \(A\mathbf{x}=\mathbf{b}\) 讲成一堆线性方程。另一种看法更有用：\(A\) 是一个函数，把 \(\mathbb{R}^n\) 里的向量搬到 \(\mathbb{R}^m\) 里。</p>
+\[
+f(\mathbf{x})=A\mathbf{x},\qquad A\in\mathbb{R}^{m\times n},\ \mathbf{x}\in\mathbb{R}^{n}.
+\]
+<p>为什么矩阵乘法长这个样子？把 \(\mathbf{x}\) 用标准基 \(\mathbf{e}_1,\dots,\mathbf{e}_n\) 展开，再用 \(f\) 的线性性（可加、齐次）拆开：</p>
+\[
+\begin{aligned}
+\mathbf{x}&=\sum_{j=1}^{n}x_j\mathbf{e}_j,\\
+f(\mathbf{x})&=f\Big(\sum_j x_j\mathbf{e}_j\Big)=\sum_j x_j f(\mathbf{e}_j)=\sum_j x_j\,\mathbf{a}_j,
+\end{aligned}
+\]
+<p>其中 \(\mathbf{a}_j=f(\mathbf{e}_j)\) 就是 \(A\) 的第 \(j\) 列。也就是说：</p>
+<div class="key"><span class="tag">几何定义</span>
+<p>矩阵的第 \(j\) 列 = 第 \(j\) 个标准基向量被搬到的地方；而 \(A\mathbf{x}\) 就是「以 \(\mathbf{x}\) 的分量为系数，对各列做线性组合」。</p>
+</div>
+<p>举个 \(2\times2\) 的例子，\(A=\begin{bmatrix}2&-1\\0&1\end{bmatrix}\)，\(\mathbf{x}=\begin{bmatrix}1\\2\end{bmatrix}\)：</p>
+\[
+\begin{bmatrix}2&-1\\0&1\end{bmatrix}\begin{bmatrix}1\\2\end{bmatrix}
+=1\cdot\begin{bmatrix}2\\0\end{bmatrix}+2\cdot\begin{bmatrix}-1\\1\end{bmatrix}
+=\begin{bmatrix}0\\2\end{bmatrix}.
+\]
+<p>看列就能直接读出这个变换干了什么：\(\mathbf{e}_1\) 被拉长 2 倍仍指向右，\(\mathbf{e}_2\) 被搬到左上。整个平面被「剪切 + 翻转」了一下，单位正方形变成平行四边形。行列式是 2，正好等于面积的放大倍数。</p>
+<p>能做的操作只有那几种：旋转、翻转、拉伸/压缩、剪切、投影（把维度压掉）。不能做的是「弯折」：线性变换必须把直线映成直线，把等距的点映成等距的点。</p>
+
+<h2>15.3 正交矩阵：只转不拉</h2>
+<p>SVD 的几何内容可以一句话说完：<b>任何线性变换都可以拆成「转一下、沿正交方向拉伸、再转一下」</b>。先把「只转不拉」这一类说清楚，后面就顺了。</p>
+<p>方阵 \(Q\) 是<b>正交矩阵</b>，当且仅当它的列两两正交且都是单位向量，即 \(Q^\top Q=I\)（实矩阵情形），等价地 \(Q^{-1}=Q^\top\)。它有三个好性质，都是一行推导：</p>
+<ol class="steps">
+<li>角度不变：\((Q\mathbf{u})^\top(Q\mathbf{v})=\mathbf{u}^\top Q^\top Q\mathbf{v}=\mathbf{u}^\top\mathbf{v}\)。</li>
+<li>长度不变：\(\lVert Q\mathbf{v}\rVert_2^2=\mathbf{v}^\top Q^\top Q\mathbf{v}=\lVert\mathbf{v}\rVert_2^2\)。</li>
+<li>面积（体积）绝对值不变：\(1=\det(I)=\det(Q^\top Q)=(\det Q)^2\)，故 \(\det Q=\pm1\)。符号是 \(+1\) 表示纯旋转，\(-1\) 表示带一次翻转（手性改变）。</li>
+</ol>
+<p>所以正交矩阵就是「刚体运动」在原点处的版本：旋转或镜像，不改变任何长度、夹角、面积。二维里它长这样：</p>
+\[
+\begin{aligned}
+\text{旋转：}\quad Q&=\begin{bmatrix}\cos\theta&-\sin\theta\\ \sin\theta&\cos\theta\end{bmatrix},\\[2pt]
+\text{镜像：}\quad Q&=\begin{bmatrix}\cos\theta&\sin\theta\\ \sin\theta&-\cos\theta\end{bmatrix}.
+\end{aligned}
+\]
+<div class="warn"><span class="tag">常见混淆</span>
+<p>「正交」在这里指<b>列向量互相垂直</b>、<b>每列长度为 1</b>，不是「矩阵元素正交」。名字起得不好，只能记牢。</p>
+</div>
+
+<h2>15.4 几何核心：先转、再拉、再转</h2>
+<p>现在做那个关键实验。拿一个单位圆（二维时比较好画；一般 \(n\) 维是单位球），随便乘一个矩阵 \(M\)。结果是什么形状？</p>
+<p>答案是<b>椭圆</b>（\(n\) 维时是超椭球）。原因是椭圆的定义就是「到两个定点的距离之和为常数」……这个定义在这里不好用，换个等价说法：<b>存在一组正交方向，使得在这组方向上，球被拉伸的倍数恰好是常数</b>。这正是下面要构造的。</p>
+<p>先给结论，再推：</p>
+<div class="key"><span class="tag">几何本质</span>
+<p>先旋转输入空间，再沿坐标轴拉伸/压缩（或翻转），再旋转输出空间。任何矩阵都只做这三件事——它不会「剪切」，只要你允许它在输入和输出两端各转一次。</p>
+</div>
+<div class="warn"><span class="tag">别把「换列」当旋转</span>
+<p>有些讲义会把「交换单位阵的两列」当成旋转的例子，这是错的，两层都错：<br>
+① 交换 \(\begin{bmatrix}1&0\\0&1\end{bmatrix}\) 的两列得到 \(\begin{bmatrix}0&1\\1&0\end{bmatrix}\)，它把 \((x,y)\) 映成 \((y,x)\)，是关于 \(y=x\) 的<b>镜像</b>，\(\det=-1\)；<br>
+② 对角矩阵 \(\operatorname{diag}(\alpha_1,\alpha_2)\) 只沿两个标准基方向各自缩放，不能把两个轴「混」起来，所以它做不到 90° 旋转（\(90^\circ\) 的矩阵是 \(\begin{bmatrix}0&-1\\1&0\end{bmatrix}\)，非对角元非零，\(\det=+1\)）。对角矩阵唯一能实现的旋转是 \(\operatorname{diag}(-1,-1)\)，即 180°。<br>
+判断口径：先看 \(\det\) 的符号（\(-1\) 一定含镜像），再看标准基方向是否被打乱。</p>
+</div>
+<p>用剪切矩阵亲手验证一下。取</p>
+\[
+M=\begin{bmatrix}1&1\\0&1\end{bmatrix},
+\]
+<p>它把单位正方形剪成平行四边形，看起来完全不像「拉伸」。但它的 SVD 是</p>
+\[
+\begin{aligned}
+M&=U\Sigma V^\top,\\
+\sigma_1&=\varphi\approx1.618,\qquad \sigma_2=\tfrac{1}{\varphi}\approx0.618 .
+\end{aligned}
+\]
+<figure class="fig">
+<img src="../assets/img/svd-rotate-scale-rotate.svg" width="336" height="752" loading="lazy" alt="剪切矩阵的 SVD 三步：单位圆先被 Vᵀ 旋转，再被 Σ 沿两轴拉伸成椭圆，最后被 U 旋转回原朝向">
+<figcaption>图 1　前面那个剪切矩阵 \(M\) 作用在单位圆上，拆成三步看。<b>(A)</b> 一步到位：椭圆；(B) 先转 \(V^\top\)（蓝色虚线是旋转后的圆，蓝色箭头是 \(\mathbf{v}_1,\mathbf{v}_2\) 的方向），\(\Sigma\) 只沿坐标轴把半径拉成 \(\sigma_1,\sigma_2\)（红）；(C) 再转 \(U\)，得到的椭圆与 (A) 逐点重合（虚线压在实线上）。</figcaption>
+</figure>
+<p>其中 \(\varphi\) 是黄金比。换算成角度：\(V\) 是 \(-58.28^\circ\) 的旋转，\(U\) 是 \(+31.72^\circ\) 的旋转。于是「剪切」= 先把输入平面逆时针转回去 \(58.28^\circ\)（进入一个特殊朝向，在这个朝向下剪切恰好表现为沿两轴的拉伸），沿两轴分别拉 \(1.618\) 和 \(0.618\) 倍，再把结果转 \(31.72^\circ\)。</p>
+<p>顺便验算两个恒等式：</p>
+\[
+\begin{aligned}
+|\det M|&=\sigma_1\sigma_2=\varphi\cdot\tfrac{1}{\varphi}=1,\\
+\kappa(M)&=\frac{\sigma_1}{\sigma_2}=\varphi^2\approx2.618 .
+\end{aligned}
+\]
+<p>行列式 1 说明面积没变（剪切确实不改面积），\(\kappa\) 叫<b>条件数</b>，说这个方向上「拉长」和「压短」差了 2.618 倍——它衡量这个线性变换有多「扁」，后面 15.11 会用。</p>
+<p>圆的像在椭圆上的对应关系很直观：半径方向被拉得<i>最多</i>的那条，倍数正好是 \(\sigma_1\)；拉得<i>最少</i>的那条，倍数正好是 \(\sigma_n\)。如果某个 \(\sigma_i=0\)，说明这个方向被压成了 0——球在这个维度上被拍扁了，矩阵不满秩。</p>
+
+<h2>15.5 从图像推出公式</h2>
+<p>上面的几何描述，可以原封不动地写成代数。设输入空间 \(\mathbb{R}^n\) 有一组正交单位基 \(\mathbf{v}_1,\dots,\mathbf{v}_n\)（就是「转回去」之后的那组坐标轴）。因为它们是正交单位基，任何向量都能这样展开（就是在做投影）：</p>
+\[
+\mathbf{x}=\sum_{j=1}^{n}(\mathbf{x}\cdot\mathbf{v}_j)\,\mathbf{v}_j .
+\]
+<p>两边左乘 \(M\)，用线性性把系数提到外面：</p>
+\[
+M\mathbf{x}=\sum_{j=1}^{n}(\mathbf{x}\cdot\mathbf{v}_j)\,M\mathbf{v}_j .
+\]
+<p>几何上，我们要求 \(M\) 在 \(\mathbf{v}_j\) 这个方向上「只拉伸不转弯」：\(M\mathbf{v}_j\) 与 \(\mathbf{v}_j\) 同向，长度是 \(\sigma_j\) 倍。但输出空间可能是 \(\mathbb{R}^m\)，方向不一定是 \(\mathbf{v}_j\)，所以给输出方向另起个名字 \(\mathbf{u}_j\)（单位向量）：</p>
+\[
+M\mathbf{v}_j=\sigma_j\mathbf{u}_j .
+\]
+<p>代回去，再把标量 \((\mathbf{x}\cdot\mathbf{v}_j)\) 换成 \(\mathbf{v}_j^\top\mathbf{x}\)，挪到后面：</p>
+\[
+M\mathbf{x}=\sum_{j=1}^{n}\sigma_j\,\mathbf{u}_j\,(\mathbf{v}_j^\top\mathbf{x})
+=\Big(\sum_{j=1}^{n}\sigma_j\mathbf{u}_j\mathbf{v}_j^\top\Big)\mathbf{x}.
+\]
+<p>这个式子对任意 \(\mathbf{x}\) 都成立，所以括号里的矩阵就是 \(M\) 本身：</p>
+\[
+\boxed{M=\sum_{j=1}^{n}\sigma_j\,\mathbf{u}_j\mathbf{v}_j^\top=U\Sigma V^\top}
+\]
+<p>其中 \(U=[\mathbf{u}_1\ \cdots\ \mathbf{u}_m]\)、\(V=[\mathbf{v}_1\ \cdots\ \mathbf{v}_n]\) 是正交矩阵，\(\Sigma\) 是把 \(\sigma_1\ge\cdots\ge\sigma_n\ge0\) 摆在左上角、其余补零的 \(m\times n\) 矩阵。</p>
+<p>每一项 \(\sigma_j\mathbf{u}_j\mathbf{v}_j^\top\) 是一个秩 1 矩阵：把输入往 \(\mathbf{v}_j\) 方向投影、乘 \(\sigma_j\)、再送到 \(\mathbf{u}_j\) 方向。所以 SVD 的意思也可以说成：</p>
+<div class="key"><span class="tag">另一种说法</span>
+<p>任何矩阵都是若干个「秩 1 切片」的加权和，权重就是奇异值。这也是为什么「丢掉最小的那些切片」等于「低秩近似」。</p>
+</div>
+
+<h2>15.6 尺寸、术语与秩</h2>
+<p>约定 \(A\in\mathbb{R}^{m\times n}\)，\(p=\min(m,n)\)。三种矩阵的尺寸容易记错，列一下：</p>
+<div class="tablewrap tight">
+<table>
+<thead><tr><th>符号</th><th class="num">尺寸</th><th>内容</th></tr></thead>
+<tbody>
+<tr><td>\(U\)</td><td>\(m\times m\)</td><td>左奇异向量（left singular vectors）作为列，正交</td></tr>
+<tr><td>\(\Sigma\)</td><td>\(m\times n\)</td><td>对角线上是 \(\sigma_1\ge\cdots\ge\sigma_p\ge0\)，其余位置为 0</td></tr>
+<tr><td>\(V\)</td><td>\(n\times n\)</td><td>右奇异向量（right singular vectors）作为列，正交</td></tr>
+</tbody>
+</table>
+</div>
+<p>几个立刻能读出来的性质：</p>
+<ul>
+<li><b>秩</b>：非零奇异值的个数 \(r=\#\{j:\sigma_j>0\}\) 等于 \(\operatorname{rank}A\)。</li>
+<li><b>零空间</b>：\(\sigma_j=0\) 对应的 \(\mathbf{v}_j\) 张成 \(A\) 的零空间（\(n-r\) 维）；对应的 \(\mathbf{u}_j\) 张成左零空间（\(m-r\) 维）。</li>
+<li><b>值域</b>：\(\{\mathbf{u}_1,\dots,\mathbf{u}_r\}\) 是列空间的一组正交基。</li>
+<li><b>Frobenius 范数</b>：\(\lVert A\rVert_F^2=\sum_{i,j}A_{ij}^2=\sum_j\sigma_j^2\)。所有「能量」都记在奇异值上。</li>
+<li><b>谱范数</b>：\(\lVert A\rVert_2=\sigma_1=\max_{\mathbf{x}\ne0}\lVert A\mathbf{x}\rVert_2/\lVert\mathbf{x}\rVert_2\)，即最大拉伸倍数。</li>
+<li><b>行列式</b>（方阵）：\(|\det A|=\prod_j\sigma_j\)，即各方向拉伸倍数的乘积。</li>
+<li><b>唯一性</b>：\(\sigma_j\) 唯一；当 \(\sigma_j\) 互不相同时，\(\mathbf{u}_j,\mathbf{v}_j\) 只能差一个符号（可以同时乘 \(-1\)，乘积不变）。所以任何实现返回的 \(U,V\) 都可能和手算差几个负号。</li>
+</ul>
+<div class="warn"><span class="tag">和特征分解的区别</span>
+<p>特征分解 \(A=Q\Lambda Q^{-1}\) 只对方阵、且要有足够多线性无关特征向量时才存在；\(A\) 不是实对称时特征向量还未必正交。SVD 对<b>任意</b>实矩阵都存在，\(\mathbf{u}\) 与 \(\mathbf{v}\) 各自正交，\(\sigma\) 也一定是非负实数。所以工程上能用的永远是 SVD，而不是特征分解。</p>
+</div>
+<div class="plainbox">
+<p><b>四个基本子空间，一套正交基。</b>线性代数的四个子空间和 SVD 是一一对应的，看懂这张表就不用再背维数公式：</p>
+<div class="tablewrap tight">
+<table>
+<thead><tr><th>子空间</th><th>所在空间</th><th class="num">维数</th><th>SVD 给的正交基</th></tr></thead>
+<tbody>
+<tr><td>列空间（值域）</td><td>\(\mathbb{R}^m\)</td><td>\(r\)</td><td>\(\mathbf{u}_1,\dots,\mathbf{u}_r\)</td></tr>
+<tr><td>左零空间（\(A^\top\) 的零空间）</td><td>\(\mathbb{R}^m\)</td><td>\(m-r\)</td><td>\(\mathbf{u}_{r+1},\dots,\mathbf{u}_m\)</td></tr>
+<tr><td>行空间</td><td>\(\mathbb{R}^n\)</td><td>\(r\)</td><td>\(\mathbf{v}_1,\dots,\mathbf{v}_r\)</td></tr>
+<tr><td>零空间</td><td>\(\mathbb{R}^n\)</td><td>\(n-r\)</td><td>\(\mathbf{v}_{r+1},\dots,\mathbf{v}_n\)</td></tr>
+</tbody>
+</table>
+</div>
+<p>所以 \(\mathbb{R}^n=\) 行空间 \(\oplus\) 零空间、\(\mathbb{R}^m=\) 列空间 \(\oplus\) 左零空间，两组基都是标准正交的。这也顺手解释了秩–零化度定理：\(r+(n-r)=n\)。前面 15.13 里「零空间的基向量直接读出来」，就是用了这张表的第四行。</p>
+</div>
+
+<h2>15.7 怎么算：从 \(A^\top A\) 出发</h2>
+<p>SVD 和特征分解的关系只有两行。把 \(A=U\Sigma V^\top\) 代进 \(A^\top A\)：</p>
+\[
+\begin{aligned}
+A^\top A&=(U\Sigma V^\top)^\top(U\Sigma V^\top)\\
+&=V\Sigma^\top U^\top U\Sigma V^\top
+ =V(\Sigma^\top\Sigma)V^\top .
+\end{aligned}
+\]
+<p>\(\Sigma^\top\Sigma\) 是 \(n\times n\) 的对角矩阵，对角元是 \(\sigma_j^2\)（多出来的补零）。右乘 \(V\) 的第 \(j\) 列 \(\mathbf{v}_j\)，得到</p>
+\[
+A^\top A\,\mathbf{v}_j=\sigma_j^2\,\mathbf{v}_j .
+\]
+<p>同理</p>
+\[
+AA^\top=U(\Sigma\Sigma^\top)U^\top\quad\Longrightarrow\quad AA^\top\mathbf{u}_j=\sigma_j^2\mathbf{u}_j .
+\]
+<div class="key"><span class="tag">计算路线</span>
+<p>\(\mathbf{v}_j\) 是 \(A^\top A\) 的单位特征向量，\(\mathbf{u}_j\) 是 \(AA^\top\) 的单位特征向量，\(\sigma_j=\sqrt{\lambda_j}\)。\(A^\top A\) 与 \(AA^\top\) 都是对称半正定矩阵，特征值非负，所以开方总是合法的。</p>
+</div>
+<p>因此手算流程是：</p>
+<ol class="steps">
+<li>算 \(A^\top A\)（\(n\times n\)）与 \(AA^\top\)（\(m\times m\)），挑小的那个用；两步都用也行，正好交叉验证。</li>
+<li>解特征方程 \(\det(A^\top A-\lambda I)=0\) 得 \(\lambda_1\ge\cdots\ge\lambda_n\ge0\)，开方得 \(\sigma_j\)。</li>
+<li>对每个 \(\lambda_j\) 解 \((A^\top A-\lambda_j I)\mathbf{v}=0\)，单位化得 \(\mathbf{v}_j\)，排成 \(V\)。</li>
+<li>用 \(\mathbf{u}_j=A\mathbf{v}_j/\sigma_j\) 反算左奇异向量（只对 \(\sigma_j>0\) 有效）。</li>
+<li>剩下的 \(\mathbf{u}\) 用「与已有 \(\mathbf{u}\) 正交」补齐（或直接解 \(A^\top\mathbf{x}=0\) 再 Gram–Schmidt）。</li>
+</ol>
+<div class="warn"><span class="tag">数值上别这么做</span>
+<p>手算用 \(A^\top A\) 很舒服，但浮点数下它会<b>把条件数平方</b>：\(\kappa(A^\top A)=\kappa(A)^2\)。\(\sigma_1/\sigma_n=10^8\) 时，\(\lambda\) 的动态范围是 \(10^{16}\)，双精度直接丢掉小的一半。所以 LAPACK / NumPy 走的是双对角化 + QR 迭代（Golub–Kahan），不是显式构造 \(A^\top A\)。这也是为什么截断 SVD 要用库函数，而不是自己写 \(A^\top A\) 加 `eig`。</p>
+</div>
+
+<h2>15.8 手算一个 \(3\times2\) 的例子</h2>
+<p>取 \(A=\begin{bmatrix}1&0\\0&1\\2&2\end{bmatrix}\)，\(m=3,n=2\)，所以 \(U\) 是 \(3\times3\)、\(\Sigma\) 是 \(3\times2\)、\(V\) 是 \(2\times2\)。</p>
+<p><b>第一步</b>：\(n=2\lt m=3\)，用小的那个：</p>
+\[
+A^\top A=\begin{bmatrix}1&0&2\\0&1&2\end{bmatrix}\begin{bmatrix}1&0\\0&1\\2&2\end{bmatrix}
+=\begin{bmatrix}5&4\\4&5\end{bmatrix}.
+\]
+<p><b>第二步</b>：特征多项式</p>
+\[
+\begin{aligned}
+\det\begin{bmatrix}5-\lambda&4\\4&5-\lambda\end{bmatrix}
+&=(5-\lambda)^2-16\\
+&=\lambda^2-10\lambda+9,
+\end{aligned}
+\]
+<p>两根 \(\lambda_1=9,\lambda_2=1\)，于是 \(\sigma_1=3,\sigma_2=1\)，\(\Sigma=\begin{bmatrix}3&0\\0&1\\0&0\end{bmatrix}\)。</p>
+<p><b>第三步</b>：对 \(\lambda_1=9\)，\((A^\top A-9I)\mathbf{v}=0\) 给出 \(-4v_1+4v_2=0\)，即 \(v_1=v_2\)，单位化得 \(\mathbf{v}_1=\frac{1}{\sqrt2}\begin{bmatrix}1\\1\end{bmatrix}\)。对 \(\lambda_2=1\)，得 \(-v_1=v_2\)，故 \(\mathbf{v}_2=\frac{1}{\sqrt2}\begin{bmatrix}1\\-1\end{bmatrix}\)。</p>
+\[
+V=\frac{1}{\sqrt2}\begin{bmatrix}1&1\\1&-1\end{bmatrix},\qquad V^\top V=I .
+\]
+<p><b>第四步</b>：用 \(\mathbf{u}_j=A\mathbf{v}_j/\sigma_j\) 反算前两列：</p>
+\[
+\begin{aligned}
+\mathbf{u}_1&=\frac{1}{3}\cdot\frac{1}{\sqrt2}\begin{bmatrix}1\\1\\4\end{bmatrix}
+=\frac{1}{\sqrt{18}}\begin{bmatrix}1\\1\\4\end{bmatrix},\\
+\mathbf{u}_2&=\frac{1}{1}\cdot\frac{1}{\sqrt2}\begin{bmatrix}1\\-1\\0\end{bmatrix}.
+\end{aligned}
+\]
+<p><b>第五步</b>：还差 \(\mathbf{u}_3\)，要求单位长度且同时垂直于 \(\mathbf{u}_1,\mathbf{u}_2\)。注意 \(\mathbf{u}_3\perp\mathbf{u}_2\)（分量 \((1,-1,0)/\sqrt2\)）相当于前两个分量相等，设 \(\mathbf{u}_3=(a,a,c)\)；再由 \(\mathbf{u}_3^\top\mathbf{u}_1=0\) 得 \(2a+4c=0\)，即 \(a=-2c\)。取 \(c=\frac13\) 归一化得</p>
+\[
+\mathbf{u}_3=\frac{1}{3}\begin{bmatrix}-2\\-2\\1\end{bmatrix},
+\qquad
+\mathbf{u}_3\cdot\mathbf{u}_1=\tfrac{-2-2+4}{3\sqrt{18}}=0 .
+\]
+<p>于是</p>
+\[
+\begin{aligned}
+U&=\begin{bmatrix}
+\frac{1}{\sqrt{18}}&\frac{1}{\sqrt2}&-\frac23\\[2pt]
+\frac{1}{\sqrt{18}}&-\frac{1}{\sqrt2}&-\frac23\\[2pt]
+\frac{4}{\sqrt{18}}&0&\frac13
+\end{bmatrix},
+\qquad
+\Sigma=\begin{bmatrix}3&0\\0&1\\0&0\end{bmatrix},\\[6pt]
+V^\top&=\frac{1}{\sqrt2}\begin{bmatrix}1&1\\1&-1\end{bmatrix},
+\qquad A=U\Sigma V^\top .
+\end{aligned}
+\]
+<p><b>验算</b>：\(\lVert A\rVert_F^2=1+0+0+1+4+4=10\)，而 \(\sigma_1^2+\sigma_2^2=9+1=10\)，一致。</p>
+<p><b>秩 1 近似</b>：只保留最大的切片 \(\sigma_1\mathbf{u}_1\mathbf{v}_1^\top\)：</p>
+\[
+\begin{aligned}
+A_1&=\sigma_1\mathbf{u}_1\mathbf{v}_1^\top
+=3\cdot\frac{1}{\sqrt{18}}\begin{bmatrix}1\\1\\4\end{bmatrix}
+  \cdot\frac{1}{\sqrt2}\begin{bmatrix}1&1\end{bmatrix}\\
+&=\begin{bmatrix}0.5&0.5\\0.5&0.5\\2&2\end{bmatrix}.
+\end{aligned}
+\]
+<p>对比原矩阵 \(A\)，误差</p>
+\[
+\begin{aligned}
+\lVert A-A_1\rVert_F&=\sigma_2=1,\\
+\frac{\lVert A-A_1\rVert_F}{\lVert A\rVert_F}&=\frac{1}{\sqrt{10}}\approx31.6\%,
+\end{aligned}
+\]
+<p>而「能量」保住了 \(\sigma_1^2/\sum_j\sigma_j^2=9/10=90\%\)。逐元素 MSE 是 \(1/6\approx0.1667\)。</p>
+<div class="note">
+<p>用 NumPy 算同一个矩阵会得到符号翻转的版本（第一列整体取负）。不是算错：同时把 \(\mathbf{u}_j,\mathbf{v}_j\) 乘 \(-1\)，\(\mathbf{u}_j\mathbf{v}_j^\top\) 不变，SVD 依然成立。</p>
+</div>
+
+<h2>15.9 三种形态：full、compact、truncated</h2>
+<p>同一个分解，工程上有三种切法。设 \(r=\operatorname{rank}A\le p=\min(m,n)\)。</p>
+<ul>
+<li><b>full SVD</b>：保留全部 \(m\) 个 \(\mathbf{u}\)、全部 \(n\) 个 \(\mathbf{v}\)。尺寸 \(m\times m\)、\(m\times n\)、\(n\times n\)。用于理论推导、零空间、伪逆。</li>
+<li><b>compact（经济型）</b>：只保留前 \(r\) 个（\(\sigma_j>0\)）。尺寸 \(m\times r\)、\(r\times r\)、\(r\times n\)。精确重构，省掉补零部分。</li>
+<li><b>truncated（截断）</b>：只保留前 \(k\le r\) 个（最大的一批）。尺寸 \(m\times k\)、\(k\times k\)、\(k\times n\)。用于低秩近似、压缩、降维。</li>
+</ul>
+<p>NumPy 的 `svd` 默认 <code>full_matrices=True</code>，返回 full 形式：\(U\) 是 \(m\times m\)、\(V^\top\) 是 \(n\times n\)，多出来的那几列不参与重构（它们张成左/右零空间）。设 <code>full_matrices=False</code> 才得到 compact 形式：\(U\) 是 \(m\times p\)、\(V^\top\) 是 \(p\times n\)，\(p=\min(m,n)\)。要截断就自己切前 \(k\) 列。注意 \(V^\top\) 是<b>转置</b>后的，行才是右奇异向量，这一点最容易写错。</p>
+<p>为什么「砍掉小的」是合理的？下面这个定理是全部低秩近似的依据。</p>
+<div class="key"><span class="tag">Eckart–Young–Mirsky</span>
+<p>设 \(A_k=\sum_{j\le k}\sigma_j\mathbf{u}_j\mathbf{v}_j^\top\)，则对所有秩不超过 \(k\) 的矩阵 \(B\)：</p>
+\[
+\begin{aligned}
+\lVert A-A_k\rVert_F&=\sqrt{\textstyle\sum_{j>k}\sigma_j^2}
+  \le\lVert A-B\rVert_F,\\
+\lVert A-A_k\rVert_2&=\sigma_{k+1}\le\lVert A-B\rVert_2 .
+\end{aligned}
+\]
+<p>也就是说 \(A_k\) 在 Frobenius 范数和谱范数下同时是最优秩 \(k\) 近似。误差只看「被丢掉的那些奇异值」，没有任何玄学。</p>
+</div>
+<p>推论：<b>相对误差的平方 = 被丢掉的能量占比</b>，即</p>
+\[
+\frac{\lVert A-A_k\rVert_F^2}{\lVert A\rVert_F^2}
+=\frac{\sum_{j>k}\sigma_j^2}{\sum_{j\le r}\sigma_j^2}.
+\]
+<p>实际做决策时，只要画一条「累计能量 \(\sum_{j\le k}\sigma_j^2/\sum_j\sigma_j^2\) 关于 \(k\) 的曲线」，看它在哪儿拐平就够了。</p>
+
+<h2>15.10 数值实验：奇异值衰减有多快</h2>
+<p>下面用一个 400×300 的合成灰度图做实验：四个硬边色块（高对比、位置规则）+ 一条细竖条纹带（高频）+ 标准差 2 的轻噪声。取「硬边」而不是平滑渐变，是因为真实的权重矩阵、注意力图也是这种「大块结构 + 少量高频」的形态；平滑渐变会让 SVD 显得比实际更强。完整代码在 15.11。</p>
+<figure class="fig">
+<img src="../assets/img/svd-lowrank.png" width="1060" height="360" loading="lazy" alt="原图与 k=5、20、100 的 SVD 重建对比：k=5 时硬边出现振铃，k=100 肉眼难辨">
+<figcaption>图 2　原图与截断重建。\(k=5\) 时硬边周围出现明显的波纹（振铃），\(k=20\) 时基本消失，\(k=100\) 与 \(400\times300\) 的满秩重建几乎无法区分。</figcaption>
+</figure>
+<figure class="fig">
+<img src="../assets/img/svd-residual.png" width="800" height="360" loading="lazy" alt="残差图，按 3 倍增益显示：k=5 时残差集中在边缘，k=100 时只剩噪声">
+<figcaption>图 3　残差 \(|A-A_k|\)（为了看得见，整体放大 3 倍）。丢掉的不是「随机噪声」，而是<b>边缘</b>——奇异值小的方向恰好承载了高频信息。</figcaption>
+</figure>
+<div class="tablewrap tight">
+<table>
+<thead><tr><th class="num">k</th><th class="num">存储</th><th class="num">能量</th><th class="num">相对误差</th><th class="num">RMSE</th></tr></thead>
+<tbody>
+<tr><td class="num">5</td><td class="num">2.92%</td><td class="num">99.0149%</td><td class="num">0.0993</td><td class="num">16.25</td></tr>
+<tr><td class="num">10</td><td class="num">5.84%</td><td class="num">99.7425%</td><td class="num">0.0507</td><td class="num">8.31</td></tr>
+<tr><td class="num">20</td><td class="num">11.68%</td><td class="num">99.8988%</td><td class="num">0.0318</td><td class="num">5.21</td></tr>
+<tr><td class="num">50</td><td class="num">29.21%</td><td class="num">99.9748%</td><td class="num">0.0159</td><td class="num">2.60</td></tr>
+<tr><td class="num">100</td><td class="num">58.42%</td><td class="num">99.9935%</td><td class="num">0.0080</td><td class="num">1.32</td></tr>
+</tbody>
+</table>
+</div>
+<p class="note">列义：<b>存储</b> = \(k(m+n+1)/(mn)\)，即存 \(U_k,\Sigma_k,V_k^\top\) 的元素数占原矩阵的比例；<b>能量</b> = \(\sum_{j\le k}\sigma_j^2/\sum_j\sigma_j^2\)；<b>相对误差</b> = \(\lVert A-A_k\rVert_F/\lVert A\rVert_F\)；<b>RMSE</b> 是逐像素差（灰度 0–255）。</p>
+<p>这张图的矩阵是满秩的（\(\operatorname{rank}=300\)），但 \(\sigma_1\approx5.30\times10^4\)、\(\sigma_{100}\approx54.6\)、\(\sigma_{300}\approx6.3\)，跨了四个数量级。图 4 是它的奇异值谱和累积能量：</p>
+<figure class="fig">
+<img src="../assets/img/svd-spectrum.svg" width="480" height="442" loading="lazy" alt="奇异值对数谱与累积能量曲线，k=5 已占 99.01% 能量">
+<figcaption>图 4　上：\(\log_{10}\sigma_k\)（横轴对数刻度）。下：累积能量占比。\(k=5\) 已 99.01%、\(k=20\) 达 99.90%。谱线在 \(k\approx78\) 有一处明显的陡降（\(\sigma_{78}\approx96.5\to\sigma_{79}\) 掉了 0.17 个数量级），说明那里有一组成分的能量被吃尽；但抬头看纵轴，绝对值早已在 \(10^2\) 以下，对重建几乎没有贡献。</figcaption>
+</figure>
+<div class="warn"><span class="tag">这张表最容易被误读的一行</span>
+<p>\(k=5\) 的「保留能量 99.01%」看着很好，但相对 Frobenius 误差还有 0.0993、RMSE 16.25，图 2 里硬边已经是明显的波纹。原因见 15.9 的推论：<b>相对误差的平方 = 丢掉的能量占比</b>，\(\sqrt{0.0099}\approx0.0995\)。能量到小数点后三位才开始「没事」，所以别用 99.9% 这种写法掩盖 10% 的误差。</p>
+</div>
+<p>这也是「满秩 ≠ 高维」的含义：<b>秩是精确概念，有效维度看奇异值的衰减</b>。真实图像、词–文档矩阵、注意力权重矩阵都有这种长尾。</p>
+<p>为什么自然图像衰减得快？因为像素之间有强相关性：相邻点的灰度几乎一样，大块区域是近似常量。这种「低秩 + 局部平滑」结构让少数几个正交方向就能解释绝大多数变化；剩下的小奇异值对应高频细节。要注意的是<b>高频 ≠ 噪声</b>：图 3 里 \(k=5\) 的残差几乎全是硬边轮廓，而 \(k=100\) 的残差才接近随机噪声。所以「截断能去噪」只在信号本身低频、噪声本身高频时才成立。</p>
+<div class="warn"><span class="tag">别把「能量」当「画质」</span>
+<p>Frobenius 误差小不代表看起来没问题（见 15.10）。视觉任务更常看 SSIM / 人眼判断，能量只是一个先验指标。</p>
+</div>
+
+<h2>15.11 代码：NumPy 与 scikit-learn</h2>
+<p>手算部分用 NumPy 复核（对应 15.8 的例子）：</p>
+<pre><code>import numpy as np
+
+A = np.array([[1., 0.],
+              [0., 1.],
+              [2., 2.]])
+
+# compact 形式：U 是 3x2，Vt 是 2x2
+U, S, Vt = np.linalg.svd(A,
+                         full_matrices=False)
+print(S)                        # [3. 1.]
+print(np.allclose(U * S @ Vt, A))   # True
+
+# 秩 1 近似
+k = 1
+A1 = (U[:, :k] * S[:k]) @ Vt[:k]
+print(np.round(A1, 3))   # 0.5/0.5/2 一行
+print(np.linalg.norm(A - A1))   # 1.0 == S[1]
+</code></pre>
+<p>要点：NumPy 的 `S` 是<b>一维</b>奇异值数组（已经降序），不是对角矩阵，要自己 `np.diag`。用 `U[:, :k] * S[:k]` 做广播比显式造对角矩阵省一次矩阵乘。</p>
+<p>15.10 的图就是这个矩阵的产物。它就是「四个硬边色块 + 一条细条纹 + 轻噪声」，没有任何外部图片，直接由代码生成，可以自己复现：</p>
+<pre><code>import numpy as np
+
+rng = np.random.default_rng(0)
+h, w = 400, 300
+y = np.linspace(0, 1, h)[:, None]
+x = np.linspace(0, 1, w)[None, :]
+
+def box(x0, x1, y0, y1):
+    return ((x > x0) & (x < x1) &
+            (y > y0) & (y < y1))
+
+img = np.full((h, w), 225.0)
+img[box(.05, .45, .08, .42)] = 45    # 暗块
+img[box(.50, .95, .15, .55)] = 70    # 灰块
+img[box(.55, .90, .65, .95)] = 200   # 亮块
+
+ell = (((x - .25) / .18) ** 2 +
+       ((y - .72) / .20) ** 2 < 1)
+img[ell] = 30                        # 椭圆
+
+a = 90 * np.pi * x
+b = 24 * np.pi * y
+stripe = (x > .42) & (x < .50)
+wave = 120 + 70 * np.sin(a) * np.cos(b)
+img = np.where(stripe, wave, img)    # 条纹
+
+noise = rng.normal(0, 2, (h, w))
+img = np.clip(img + noise, 0, 255)
+</code></pre>
+<p>拿到任意 \(m\times n\) 灰度矩阵后，下面这段算出 15.10 那张表的每一列（`plt.imread` 换成自己的图即可）：</p>
+<pre><code>import numpy as np
+import matplotlib.pyplot as plt
+
+img = plt.imread('image.png')  # h,w[,3]
+h, w = img.shape[:2]
+
+def compress(channel, k):
+    U, S, Vt = np.linalg.svd(
+        channel, full_matrices=False)
+    return (U[:, :k] * S[:k]) @ Vt[:k]
+
+U, S, Vt = np.linalg.svd(img,
+                         full_matrices=False)
+energy = np.cumsum(S ** 2) / (S ** 2).sum()
+
+for k in (5, 10, 20, 50, 100):
+    if img.ndim == 3:
+        chans = [compress(img[:, :, c], k)
+                 for c in range(3)]
+        rec = np.stack(chans, axis=2)
+    else:
+        rec = compress(img, k)
+    rel = (np.linalg.norm(img - rec) /
+           np.linalg.norm(img))
+    rmse = np.sqrt(np.mean((rec - img) ** 2))
+    keep = k * (h + w + 1) / (h * w)
+    print(f'{k:3d} {keep:6.2%} '
+          f'{rel:7.4f} {rmse:6.2f}')
+</code></pre>
+<p>存储为什么是 \(k(m+n+1)\)？需要存 \(m\times k\) 的 \(U_k\)、\(k\) 个数、\(k\times n\) 的 \(V_k^\top\)。分母 \(mn\) 是原始矩阵的元素个数。\(k\) 小的时候收益巨大，\(k\to\min(m,n)\) 时反而比原矩阵更大——压缩只在低秩时成立。</p>
+<p>scikit-learn 的 `TruncatedSVD` 直接用截断版求解器，并且总是返回「降维后的数据」\(X V_k\)。注意它要求 <code>n_components &lt; n_features</code>：下面这个 \(A\) 只有 2 列，所以 \(k\) 只能取 1（取 2 会直接抛 <code>ValueError</code>）：</p>
+<pre><code>from sklearn.decomposition import (
+    TruncatedSVD)
+
+svd = TruncatedSVD(n_components=1,
+                   random_state=0)
+Z = svd.fit_transform(A)   # (m,k)=U_k*Sigma_k
+R = svd.inverse_transform(Z)
+print(svd.singular_values_)   # [3.]
+print(svd.components_.shape)  # (1, 2)
+</code></pre>
+<p>`algorithm='randomized'` 是默认值（Halko–Martinsson–Tropp 的随机化算法），对稀疏、超大的矩阵比精确 SVD 快得多；`'arpack'` 走 ARPACK 迭代，适合只想算前若干个奇异值的情形。</p>
+<div class="note">
+<p>`TruncatedSVD` 的中心化：它<b>不</b>做均值中心化（这正是它和 PCA 的实现差别）。做 PCA 请用 `sklearn.decomposition.PCA`，那里会先减均值。</p>
+</div>
+
+<h2>15.12 和 PCA 是同一件事</h2>
+<p>设数据矩阵 \(X\in\mathbb{R}^{n\times p}\)：\(n\) 个样本、\(p\) 个特征（每行一个样本，通常已中心化）。它的 SVD 是 \(X=U\Sigma V^\top\)。协方差矩阵（差一个 \(1/(n-1)\) 的常数）是：</p>
+\[
+\begin{aligned}
+X^\top X&=(U\Sigma V^\top)^\top(U\Sigma V^\top)\\
+&=V\Sigma^\top U^\top U\Sigma V^\top
+ =V\Sigma^2V^\top .
+\end{aligned}
+\]
+<p>也就是说 \(X^\top X\) 的特征分解就是 \(V\Sigma^2V^\top\)：<b>右奇异向量 \(V\) 就是主成分方向</b>，\(\sigma_j^2\) 正比于第 \(j\) 个主成分的方差。投影到前 \(k\) 个主成分上：</p>
+\[
+Z=XV_k=U_k\Sigma_k\quad(\text{因为 }XV=U\Sigma).
+\]
+<p>两种写法等价，但右边只要乘 \(m\times k\) 与 \(k\times k\)，比左边乘 \(m\times n\) 与 \(n\times k\) 便宜——这就是 15.11 里 `fit_transform` 直接返回 \(U_k\Sigma_k\) 的原因。</p>
+<p>新样本 \(\mathbf{x}\)（列向量）要投影到同一子空间：\(\mathbf{z}=V_k^\top\mathbf{x}\)。注意转置方向：数据按行存时是 \(XV_k\)，按列存时是 \(V_k^\top\mathbf{x}\)。</p>
+<div class="warn"><span class="tag">中心化不能省</span>
+<p>上面这个等价关系要求 <b>\(X\) 已经按列减过均值</b>。否则 \(X^\top X\) 里混进了均值的外积，第一主成分会退化成「均值方向」——一张全体偏亮的图，第一主成分就是亮度本身。这也解释了 15.11 里两个 API 的差别：`PCA` 会先中心化，`TruncatedSVD` 不会（它严格来说叫未中心化的 PCA / LSA）。稀疏矩阵不能随便减均值（会把 0 变成非 0，稀疏性消失），所以文本场景常用 `TruncatedSVD` 而不是 `PCA`。</p>
+</div>
+
+<h2>15.13 用 SVD 解方程、找零空间</h2>
+<p>SVD 最实用的副产品是<b>伪逆</b>：</p>
+\[
+A^{+}=V\Sigma^{+}U^\top,\qquad
+\Sigma^{+}_{jj}=\begin{cases}1/\sigma_j,&\sigma_j>0,\\0,&\sigma_j=0.\end{cases}
+\]
+<p>\(A^+\mathbf{b}\) 给出最小二乘解，并且在解不唯一时给出<b>范数最小</b>的那个。\(A\) 可逆时 \(A^+=A^{-1}\)；\(A\) 不是方阵也能用。NumPy 里 `np.linalg.pinv(A) @ b` 就是它。</p>
+<p>看一个具体例子。三个人分气瓶的问题化成一对方程：</p>
+\[
+19J-20D=0,\qquad 6J-15D+1650=0,
+\]
+<p>写成 \(A\mathbf{w}=0\)，其中 \(\mathbf{w}=(J,D,1)^\top\)：</p>
+\[
+A=\begin{bmatrix}19&-20&0\\6&-15&1650\end{bmatrix}.
+\]
+<p>这是个 \(2\times3\) 矩阵，\(\operatorname{rank}A=2\)（\(\sigma_1\approx1650.08,\ \sigma_2\approx27.59\)），所以零空间是 1 维。SVD 的第三行 \(V^\top\) 就是零空间的基：</p>
+\[
+\mathbf{v}_3\approx\begin{bmatrix}0.724995\\0.688745\\0.003625\end{bmatrix},
+\qquad
+\frac{\mathbf{v}_3}{\min(\mathbf{v}_3)}=\begin{bmatrix}200\\190\\1\end{bmatrix},
+\]
+\[
+\Longrightarrow\quad J=200,\ D=190 .
+\]
+<p>验算：\(19\cdot200-20\cdot190=3800-3800=0\)，\(6\cdot200-15\cdot190+1650=1200-2850+1650=0\)。</p>
+<p>这件事的价值在于：<b>零空间的基向量直接就是齐次方程的解</b>，不用做消元、不用选自由变量、不用回代。把最后一维归一化成 1，就得到原方程组的解。代价是 SVD 比高斯消元贵（\(O(mn^2)\) 对 \(O(n^3/3)\)，量级相近但常数大），所以只在「需要稳健性」或「需要低秩结构」时才这么做。</p>
+<div class="key"><span class="tag">为什么对病态问题更稳</span>
+<p>\(\kappa(A)=\sigma_1/\sigma_n\) 决定了线性方程组解对扰动的放大倍数。\(\sigma_n\) 很小意味着矩阵「几乎把某个方向压成 0」，此时求逆等于把误差放大 \(1/\sigma_n\) 倍。用 \(\Sigma^+\) 时显式把 \(\sigma_j\) 低于阈值的方向置 0（截断伪逆），本质上就是「宁可丢掉这个方向，也不要把噪声放大」。岭回归、Tikhonov 正则化都是这件事的连续版本。</p>
+</div>
+
+<h2>15.14 最小二乘的几何：投影到列空间</h2>
+<p>上一节的例子里 \(A\) 是方的、可逆的，零空间那一条是「加了一列常数项」造成的。更有代表性的是 \(A\mathbf{x}=\mathbf{b}\) <b>无解</b>的情形：\(m\gt n\) 时方程的个数多于未知数，\(\mathbf{b}\) 一般不在 \(A\) 的列空间里。</p>
+<p>此时我们退一步，找让残差最小的 \(\mathbf{x}\)：</p>
+\[
+\min_{\mathbf{x}}\ \lVert A\mathbf{x}-\mathbf{b}\rVert_2 .
+\]
+<p>几何上答案很直接：<b>把 \(\mathbf{b}\) 正交投影到 \(A\) 的列空间，再在列空间里精确求解</b>。列空间的正交基是 \(\{\mathbf{u}_1,\dots,\mathbf{u}_r\}\)，所以投影矩阵是</p>
+\[
+P=U_rU_r^\top,\qquad
+P\mathbf{b}=\sum_{j=1}^{r}(\mathbf{u}_j^\top\mathbf{b})\,\mathbf{u}_j .
+\]
+<p>残差就是被投影掉的部分，它只落在 \(\{\mathbf{u}_{r+1},\dots,\mathbf{u}_m\}\) 张成的左零空间里：</p>
+\[
+\mathbf{b}-A\mathbf{x}_\star=\sum_{j=r+1}^{m}(\mathbf{u}_j^\top\mathbf{b})\,\mathbf{u}_j,
+\]
+\[
+\lVert\mathbf{b}-A\mathbf{x}_\star\rVert_2^2
+=\sum_{j>r}(\mathbf{u}_j^\top\mathbf{b})^2 .
+\]
+<p>把 \(A=U\Sigma V^\top\) 代进伪逆就得到解，全过程没有求逆矩阵：</p>
+\[
+\begin{aligned}
+\mathbf{x}_\star&=A^{+}\mathbf{b}=V_r\Sigma_r^{-1}U_r^\top\mathbf{b}\\
+&=\sum_{j=1}^{r}\frac{\mathbf{u}_j^\top\mathbf{b}}{\sigma_j}\,\mathbf{v}_j .
+\end{aligned}
+\]
+<p>顺便验证它和法方程 \(A^\top A\mathbf{x}=A^\top\mathbf{b}\) 是同一件事：\(A^\top A=V\Sigma^\top\Sigma V^\top=V\Sigma^2V^\top\)（满列秩时），代进去</p>
+\[
+V\Sigma^2V^\top\mathbf{x}=V\Sigma U^\top\mathbf{b}
+\]
+\[
+\Longrightarrow\quad
+\mathbf{x}=V\Sigma^{-2}V^\top V\Sigma U^\top\mathbf{b}
+=V\Sigma^{-1}U^\top\mathbf{b}.
+\]
+<p>式子一模一样，但<b>做法完全不同</b>：法方程要算 \(A^\top A\)（把条件数平方，见 15.7 的警告），SVD 路线不需要。</p>
+<p>拿 15.8 的 \(A=\begin{bmatrix}1&0\\0&1\\2&2\end{bmatrix}\) 配 \(\mathbf{b}=(1,1,0)^\top\) 算一遍。\(r=2\)，残差只可能在 \(\mathbf{u}_3\) 方向。三个投影系数：</p>
+\[
+\begin{aligned}
+\mathbf{u}_1^\top\mathbf{b}&=\frac{1+1+0}{\sqrt{18}}=\frac{\sqrt2}{3}\approx0.4714,\\
+\mathbf{u}_2^\top\mathbf{b}&=\frac{1-1+0}{\sqrt2}=0 .
+\end{aligned}
+\]
+<p>因为 \(\mathbf{u}_2^\top\mathbf{b}=0\)，解里 \(\mathbf{v}_2\) 方向的系数是 0，于是</p>
+\[
+\begin{aligned}
+\mathbf{x}_\star&=\frac{0.4714}{3}\,\mathbf{v}_1
+=\frac{0.4714}{3}\cdot\frac{1}{\sqrt2}\begin{bmatrix}1\\1\end{bmatrix}\\
+&=\frac{1}{9}\begin{bmatrix}1\\1\end{bmatrix}
+\approx\begin{bmatrix}0.1111\\0.1111\end{bmatrix}.
+\end{aligned}
+\]
+<p>投影点 \(A\mathbf{x}_\star=(0.1111,\ 0.1111,\ 0.4444)^\top\)，残差 \(\mathbf{b}-A\mathbf{x}_\star=(0.8889,\ 0.8889,\ -0.4444)^\top\)，长度 \(4/3\approx1.333\)。用谱检一下：\(\mathbf{u}_3^\top\mathbf{b}=\frac{-2-2+0}{3}=-\frac43\)，残差 \(=(\mathbf{u}_3^\top\mathbf{b})\mathbf{u}_3=\frac{8}{9}(1,1,-\frac12)^\top\)，与上面的向量一致。</p>
+<div class="key"><span class="tag">记住这个图像</span>
+<p>最小二乘 = 投影。<b>能不能精确求解</b>看 \(\mathbf{b}\) 是否落在 \(\{\mathbf{u}_1,\dots,\mathbf{u}_r\}\) 里；<b>解稳不稳</b>看 \(\sigma_r\)（越小，\(\mathbf{v}_j/\sigma_j\) 这一项越容易被 \(\mathbf{b}\) 的扰动带跑）。</p>
+</div>
+
+<h2>15.15 低秩参数化：LoRA 的账</h2>
+<p>上面所有内容都是「先有一个矩阵，再把它压成低秩」。工程上更常见的是反过来：<b>一开始就只允许矩阵是低秩的</b>。</p>
+<p>以微调一个 \(1024\times1024\) 的线性层为例（Qwen3-0.6B 的隐藏维度就是 1024）。全量微调要更新</p>
+\[
+mn=1024\times1024=1{,}048{,}576\ \text{个参数}.
+\]
+<p>LoRA 改成 \(W'=W+BA\)，\(B\in\mathbb{R}^{m\times r}\)、\(A\in\mathbb{R}^{r\times n}\)，只训练 \(B,A\)：</p>
+\[
+mr+rn=r(m+n).
+\]
+<p>取 \(r=8\)：\(8\times2048=16{,}384\)，是原来的 \(1.56\%\)；取 \(r=16\)：\(32{,}768\)，\(3.13\%\)。前向计算量也相应变成 \(r(m+n)\) 次乘加而不是 \(mn\)。</p>
+<p>为什么这么小的 \(r\) 够用？因为假设「微调带来的增量 \(\Delta W\) 近似低秩」。这个假设可以用 SVD 直接检验：先全量微调一个小模型，对 \(\Delta W\) 做 SVD，看前 \(r\) 个奇异值占多少能量（就是 15.9 的累计能量曲线）。如果 \(\sum_{j\le r}\sigma_j^2/\sum_j\sigma_j^2\) 已经 95% 以上，说明秩 \(r\) 就够。</p>
+<div class="warn"><span class="tag">截断 SVD ≠ LoRA</span>
+<p>两者共用「低秩」这个假设，但优化目标不同：截断 SVD 最小化 \(\lVert\Delta W-BA\rVert_F\)，有 Eckart–Young 保证它是最优的；LoRA 最小化的是<b>任务损失</b>，训练出来的 \(BA\) 通常不是 \(\Delta W\) 的最优秩 \(r\) 近似。所以「用 SVD 分解出 \(A,B\) 当 LoRA 初值」只是巧妙的初始化，不是等价变换。</p>
+</div>
+<p>还有一点容易忽略：\(B\) 通常初始化为 0（或 \(A\) 用高斯、\(B\) 用 0），这样训练开始时 \(BA=0\)，模型行为与原模型完全一致。若改成随机初始化，第一步就会破坏预训练权重。</p>
+
+<h2>15.16 数值秩与随机化 SVD</h2>
+<p>浮点里几乎没有矩阵是「精确低秩」的：一张 400×300 的图，第 300 个奇异值也是 4.2 而不是 0。所以「秩」在工程上要换成带阈值的版本：</p>
+\[
+\operatorname{rank}_\tau A=\#\{j:\sigma_j\gt\tau\},
+\]
+\[
+\tau=\sigma_1\cdot\max(m,n)\cdot\epsilon_{\text{mach}} .
+\]
+<p>\(\epsilon_{\text{mach}}\) 是浮点精度（float64 约 \(2.2\times10^{-16}\)，float32 约 \(1.2\times10^{-7}\)）。乘 \(\max(m,n)\) 是因为 \(A^\top A\) 里的求和项数随维度增长，舍入误差会累积。<code>np.linalg.matrix_rank</code> 的默认容差就是这个式子。</p>
+<ul>
+<li><b>精确秩</b>：\(\#\{j:\sigma_j\gt0\}\)。符号计算、教学用。</li>
+<li><b>数值秩</b>：\(\sigma_j\gt\sigma_1\max(m,n)\epsilon\)。判断「这个矩阵是不是真的不满秩」。</li>
+<li><b>有效秩</b>：最小的 \(k\) 使 \(\sum_{j\le k}\sigma_j^2/\sum_j\sigma_j^2\ge1-\delta\)。压缩、降维用，前提是先说清能接受多少误差。</li>
+</ul>
+<p>另一个现实问题是大。精确 SVD 的复杂度是 \(O(mn\min(m,n))\)，\(10^5\times10^5\) 的矩阵根本做不完，也放不进内存。<b>随机化 SVD</b>（Halko–Martinsson–Tropp）只用三次矩阵乘就能拿到前 \(k\) 个奇异三元组：</p>
+<ol class="steps">
+<li>取随机高斯矩阵 \(\Omega\in\mathbb{R}^{n\times(k+p)}\)（\(p\approx5\sim10\) 是过采样量），计算 \(\mathbf{Y}=A\Omega\)。\(\mathbf{Y}\) 的列几乎必然落在 \(A\) 的前 \(k+p\) 个左奇异向量张成的子空间里。</li>
+<li>对 \(\mathbf{Y}\) 做 QR 分解得 \(Q\in\mathbb{R}^{m\times(k+p)}\)，它的列是这个子空间的正交基，这就是「抓到了主要方向」。</li>
+<li>把 \(A\) 投影到这个子空间：\(B=Q^\top A\in\mathbb{R}^{(k+p)\times n}\)。\(B\) 很小，对它做精确 SVD 得 \(B=\hat U\Sigma V^\top\)，于是 \(U\approx Q\hat U\)。</li>
+</ol>
+<p>如果奇异值衰减不够快（\(\sigma_{k+1}\) 和 \(\sigma_1\) 差不多），第 1 步抓到的子空间就不准，这时插入若干次幂迭代——把 \(\mathbf{Y}\) 换成 \((AA^\top)^qA\Omega\)，让大奇异值相对放大 \(({\sigma_j}/{\sigma_{j'}})^{2q}\) 倍。这正是 <code>TruncatedSVD(algorithm='randomized')</code> 背后的算法。</p>
+<div class="note">
+<p>随机化 SVD 的误差是概率意义下的：以极大概率（由 \(p\) 决定）满足 \(\lVert A-U_k\Sigma_kV_k^\top\rVert\le(1+\varepsilon)\lVert A-A_k\rVert\)，\(\varepsilon\) 随 \(p\) 增大而减小。它是「几乎最优」而不是「Eckart–Young 意义下的恰好最优」。</p>
+</div>
+
+<h2>15.17 三个常见误解</h2>
+<p><b>①「秩小的矩阵一定简单、元素一定小」。</b>秩只说明列之间有没有线性关系，和数值大小无关。\(A=10^6\begin{bmatrix}1&0\\0&0\end{bmatrix}\) 的秩是 1，谱范数是 \(10^6\)。反过来，元素都在 \([0,1]\) 里的随机矩阵往往是满秩的。判断「简单」要看奇异值谱，不是看秩这个数字。</p>
+<p><b>②「奇异值就是特征值的绝对值」。</b>这只对<b>对称</b>（更一般地，正规）矩阵成立。反例：</p>
+\[
+A=\begin{bmatrix}0&1\\0&0\end{bmatrix},
+\qquad
+\det(A-\lambda I)=\lambda^2,
+\]
+\[
+\Rightarrow\quad \lambda_1=\lambda_2=0,
+\]
+<p>但 \(A^\top A=\begin{bmatrix}0&0\\0&1\end{bmatrix}\)，所以 \(\sigma_1=1,\sigma_2=0\)。特征值全 0 的矩阵照样能把某个向量拉长 1 倍——它只是「转完就压扁」。</p>
+<p><b>③「截断 SVD 丢掉的都是噪声」。</b>丢掉的是「能量小的方向」，而能量小不等于噪声：一张全体偏亮的照片，最亮的那个方向（均值）恰好是最大的奇异值方向；细纹理反过来可能落在很小的奇异值上。PCA 去噪成立的前提是「信号能量集中在少数方向」——这是关于数据分布的假设，需要被检验，不是 SVD 自带的性质。同理，去掉最大的几个分量也常被用来「去背景」，方向相反但道理一样。</p>
+
+<h2>15.18 应用与局限</h2>
+<p>按「数据长什么样」分类，SVD 的用法其实只有几条：</p>
+<ul>
+<li><b>低秩压缩</b>：图像、权重矩阵、KV cache。前提是奇异值衰减快。</li>
+<li><b>降维 / 去噪</b>：PCA、LSA（潜在语义分析，把词–文档矩阵的低秩分解当作主题）。丢掉小奇异值等于丢掉「每个样本各自的小抖动」。</li>
+<li><b>推荐系统</b>：把用户–物品评分矩阵分解成 \(U\Sigma V^\top\)，\(\mathbf{u}_i\) 与 \(\mathbf{v}_j\) 的内积预测缺失评分。真正的工业实现（如 FunkSVD、ALS）是带正则的最小二乘，不直接调 `svd`，因为评分矩阵有大片缺失。</li>
+<li><b>求解与求逆</b>：伪逆、最小二乘、条件数估计、秩判定。</li>
+<li><b>低秩适配</b>：LoRA 假设 \(\Delta W\) 近似低秩（见 15.15）。这与截断 SVD 是同一个假设的两种用法：一个是「先有矩阵再截断」，一个是「一开始就只允许低秩」。</li>
+</ul>
+<p>局限也要说清楚：</p>
+<ul>
+<li><b>贵</b>：精确 SVD 是 \(O(mn\min(m,n))\) 级；且要能放进内存。超大矩阵只能用随机化 SVD 或增量方法。</li>
+<li><b>只抓线性结构</b>：SVD 看不到非线性关系；对稀疏、重尾、类别型数据，它给出的「主方向」未必有物理意义。</li>
+<li><b>不处理缺失值</b>：`svd` 要求矩阵完整，缺失必须先填补，而填补本身会引入偏差。带缺失的矩阵分解要用专门的优化（加权最小二乘、ALS）。</li>
+<li><b>不可解释</b>：奇异向量是原始特征的线性组合，系数常常没有直观含义；符号也不唯一。</li>
+<li><b>不擅长频繁更新</b>：新数据到来时精确 SVD 不能廉价增量更新，流式场景要用增量/随机算法。</li>
+</ul>
+
+<h2>15.19 小结</h2>
+<ul>
+<li>几何：任何线性变换 = 转一次 + 沿正交方向拉伸 + 再转一次；单位球因此变成超椭球。</li>
+<li>代数：\(A=U\Sigma V^\top\)，\(\mathbf{v}_j\) 是 \(A^\top A\) 的单位特征向量，\(\mathbf{u}_j\) 是 \(AA^\top\) 的单位特征向量，\(\sigma_j=\sqrt{\lambda_j}\)。</li>
+<li>切片：\(A=\sum_j\sigma_j\mathbf{u}_j\mathbf{v}_j^\top\)，每一项都是秩 1。</li>
+<li>近似：Eckart–Young 保证截断到 \(k\) 项在 Frobenius 与谱范数下都是最优；误差 \(\lVert A-A_k\rVert_F=\sqrt{\sum_{j>k}\sigma_j^2}\)。</li>
+<li>实用：伪逆 \(A^+=V\Sigma^+U^\top\)；零空间由零奇异值对应的 \(\mathbf{v}_j\) 张成；PCA 就是 \(X^\top X\) 的特征分解。</li>
+</ul>
+<p><b>对应代码</b>：本仓库的 Go 实现里没有直接的 SVD 调用。相关的是 <code>model/</code> 下的权重加载与 LoRA 分支——那里用到的是「低秩参数化」这条假设，而不是显式分解。要在 Go 里做 SVD，用 <code>gonum.org/v1/gonum/mat</code> 的 <code>mat.SVD</code>（底层就是 LAPACK 的 <code>gesvd</code>），不要自己构造 \(A^\top A\)。</p>
+</article>
+</main>
+
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

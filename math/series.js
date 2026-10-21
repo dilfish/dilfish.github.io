@@ -17,6 +17,7 @@ window.SERIES = {
     { file: '12-sampling.html',         num: '12', title: '采样：温度、top-k、top-p、逆变换' },
     { file: '13-batching.html',         num: '13', title: '批处理、padding、chunked prefill' },
     { file: '14-floating-point.html',   num: '14', title: '浮点数与误差：为什么容差是 1e-6' },
+    { file: '15-svd.html',              num: '15', title: '奇异值分解：几何直觉、手算过程与低秩近似' },
     { file: 'a-cheatsheet.html',        num: 'A',  title: '附录 A. 公式速查表' },
     { file: 'b-code-index.html',        num: 'B',  title: '附录 B. 数学 ↔ 代码索引' }
   ]

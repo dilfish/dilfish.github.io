@@ -58,6 +58,14 @@ pre code{background:none;border:0;padding:0;font-size:inherit}
 .katex{font-size:1.04em}
 p>.katex{white-space:nowrap}
 
+/* 插图 */
+.fig{margin:1.4em 0;text-align:center}
+.fig img{max-width:100%;height:auto;display:block;margin:0 auto;border:1px solid var(--rule);
+  border-radius:8px;background:#fff}
+.fig figcaption{margin:.55em auto 0;max-width:34rem;font:13.5px/1.65 var(--sans);
+  color:var(--ink-soft);text-align:left}
+.fig figcaption .katex{font-size:1em}
+
 /* 提示块 */
 .plainbox{margin:1.2em 0;padding:.85em 1em;background:var(--panel);border:1px solid var(--rule);
   border-radius:10px;font-size:.95rem}
@@ -87,6 +95,9 @@ ol.steps>li>:first-child{margin-top:0}
 /* 表格 */
 .tablewrap{overflow-x:auto;margin:1.3em 0}
 table{border-collapse:collapse;width:100%;min-width:30rem;font-size:.9rem}
+/* 窄表：列少且都是短数字时用，避免在 420px 视口里横向滚动 */
+.tablewrap.tight table{min-width:0;font-size:.84rem}
+.tablewrap.tight th,.tablewrap.tight td{padding:.45em .35em}
 th,td{text-align:left;vertical-align:top;padding:.5em .65em;border-bottom:1px solid var(--rule)}
 th{font:600 .76rem/1.4 var(--sans);letter-spacing:.03em;color:var(--muted);
   text-transform:uppercase;border-bottom:2px solid var(--accent)}

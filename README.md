@@ -11,8 +11,8 @@
 | 路径 | 内容 |
 |---|---|
 | `gpu/` | 《GPU 编程基础》—— 从 CPU 思维迁移到 GPU，9 篇 |
-| `math/` | 《inferserver 的数学基础》—— 推理服务用到的公式逐条推导，17 篇 |
-| `assets/` | 样式（`css/`）、脚本（`js/`）、本地 KaTeX（`katex/`） |
+| `math/` | 《inferserver 的数学基础》—— 推理服务用到的公式逐条推导，18 篇 |
+| `assets/` | 样式（`css/`）、脚本（`js/`）、本地 KaTeX（`katex/`）、插图（`img/`） |
 
 `gpu/` 与 `math/` 下的页面共用 `assets/js/nav.js`（面包屑、上一章 / 下一章、KaTeX 渲染），
 各自用 `series.js` 声明章节列表。
