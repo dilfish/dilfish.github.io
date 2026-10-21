@@ -268,3 +268,9 @@ document.querySelectorAll('main *').forEach(el => {
   或读 PNG 头）。写成缩放后尺寸会让浏览器按错误比例预留位置，图会糊或抖。
 - 溢出探针跑一遍，`main` 内应为 0 条（`.katex-mathml` 除外）。
 - 图注、表格里的数字必须与生成脚本的输出一致；改了数据就重跑脚本，不要手改其中一半。
+- **正文里没有 Markdown**：代码样式一律 `<code>…</code>`，不要写反引号——反引号在 HTML 里会
+  原样显示成 `` `svd` ``。自查：
+  ```sh
+  python3 -c "import re,sys;s=open('math/15-svd.html').read();b=re.sub(r'<pre>.*?</pre>','',s,flags=re.S);print(re.findall(r'\`[^\`]+\`',b) or '无残留')"
+  ```
+  同一段落里 `<code>` 与 Markdown 混用最容易漏，因为两者在源码里看起来都「像代码」。

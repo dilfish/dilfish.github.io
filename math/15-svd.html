@@ -209,7 +209,7 @@ AA^\top=U(\Sigma\Sigma^\top)U^\top\quad\Longrightarrow\quad AA^\top\mathbf{u}_j=
 <li>剩下的 \(\mathbf{u}\) 用「与已有 \(\mathbf{u}\) 正交」补齐（或直接解 \(A^\top\mathbf{x}=0\) 再 Gram–Schmidt）。</li>
 </ol>
 <div class="warn"><span class="tag">数值上别这么做</span>
-<p>手算用 \(A^\top A\) 很舒服，但浮点数下它会<b>把条件数平方</b>：\(\kappa(A^\top A)=\kappa(A)^2\)。\(\sigma_1/\sigma_n=10^8\) 时，\(\lambda\) 的动态范围是 \(10^{16}\)，双精度直接丢掉小的一半。所以 LAPACK / NumPy 走的是双对角化 + QR 迭代（Golub–Kahan），不是显式构造 \(A^\top A\)。这也是为什么截断 SVD 要用库函数，而不是自己写 \(A^\top A\) 加 `eig`。</p>
+<p>手算用 \(A^\top A\) 很舒服，但浮点数下它会<b>把条件数平方</b>：\(\kappa(A^\top A)=\kappa(A)^2\)。\(\sigma_1/\sigma_n=10^8\) 时，\(\lambda\) 的动态范围是 \(10^{16}\)，双精度直接丢掉小的一半。所以 LAPACK / NumPy 走的是双对角化 + QR 迭代（Golub–Kahan），不是显式构造 \(A^\top A\)。这也是为什么截断 SVD 要用库函数，而不是自己写 \(A^\top A\) 加 <code>eig</code>。</p>
 </div>
 
 <h2>15.8 手算一个 \(3\times2\) 的例子</h2>
@@ -289,7 +289,7 @@ A_1&=\sigma_1\mathbf{u}_1\mathbf{v}_1^\top
 <li><b>compact（经济型）</b>：只保留前 \(r\) 个（\(\sigma_j>0\)）。尺寸 \(m\times r\)、\(r\times r\)、\(r\times n\)。精确重构，省掉补零部分。</li>
 <li><b>truncated（截断）</b>：只保留前 \(k\le r\) 个（最大的一批）。尺寸 \(m\times k\)、\(k\times k\)、\(k\times n\)。用于低秩近似、压缩、降维。</li>
 </ul>
-<p>NumPy 的 `svd` 默认 <code>full_matrices=True</code>，返回 full 形式：\(U\) 是 \(m\times m\)、\(V^\top\) 是 \(n\times n\)，多出来的那几列不参与重构（它们张成左/右零空间）。设 <code>full_matrices=False</code> 才得到 compact 形式：\(U\) 是 \(m\times p\)、\(V^\top\) 是 \(p\times n\)，\(p=\min(m,n)\)。要截断就自己切前 \(k\) 列。注意 \(V^\top\) 是<b>转置</b>后的，行才是右奇异向量，这一点最容易写错。</p>
+<p>NumPy 的 <code>svd</code> 默认 <code>full_matrices=True</code>，返回 full 形式：\(U\) 是 \(m\times m\)、\(V^\top\) 是 \(n\times n\)，多出来的那几列不参与重构（它们张成左/右零空间）。设 <code>full_matrices=False</code> 才得到 compact 形式：\(U\) 是 \(m\times p\)、\(V^\top\) 是 \(p\times n\)，\(p=\min(m,n)\)。要截断就自己切前 \(k\) 列。注意 \(V^\top\) 是<b>转置</b>后的，行才是右奇异向量，这一点最容易写错。</p>
 <p>为什么「砍掉小的」是合理的？下面这个定理是全部低秩近似的依据。</p>
 <div class="key"><span class="tag">Eckart–Young–Mirsky</span>
 <p>设 \(A_k=\sum_{j\le k}\sigma_j\mathbf{u}_j\mathbf{v}_j^\top\)，则对所有秩不超过 \(k\) 的矩阵 \(B\)：</p>
@@ -366,7 +366,7 @@ A1 = (U[:, :k] * S[:k]) @ Vt[:k]
 print(np.round(A1, 3))   # 0.5/0.5/2 一行
 print(np.linalg.norm(A - A1))   # 1.0 == S[1]
 </code></pre>
-<p>要点：NumPy 的 `S` 是<b>一维</b>奇异值数组（已经降序），不是对角矩阵，要自己 `np.diag`。用 `U[:, :k] * S[:k]` 做广播比显式造对角矩阵省一次矩阵乘。</p>
+<p>要点：NumPy 的 <code>S</code> 是<b>一维</b>奇异值数组（已经降序），不是对角矩阵，要自己 <code>np.diag</code>。用 <code>U[:, :k] * S[:k]</code> 做广播比显式造对角矩阵省一次矩阵乘。</p>
 <p>15.10 的图就是这个矩阵的产物。它就是「四个硬边色块 + 一条细条纹 + 轻噪声」，没有任何外部图片，直接由代码生成，可以自己复现：</p>
 <pre><code>import numpy as np
 
@@ -397,7 +397,7 @@ img = np.where(stripe, wave, img)    # 条纹
 noise = rng.normal(0, 2, (h, w))
 img = np.clip(img + noise, 0, 255)
 </code></pre>
-<p>拿到任意 \(m\times n\) 灰度矩阵后，下面这段算出 15.10 那张表的每一列（`plt.imread` 换成自己的图即可）：</p>
+<p>拿到任意 \(m\times n\) 灰度矩阵后，下面这段算出 15.10 那张表的每一列（<code>plt.imread</code> 换成自己的图即可）：</p>
 <pre><code>import numpy as np
 import matplotlib.pyplot as plt
 
@@ -428,7 +428,7 @@ for k in (5, 10, 20, 50, 100):
           f'{rel:7.4f} {rmse:6.2f}')
 </code></pre>
 <p>存储为什么是 \(k(m+n+1)\)？需要存 \(m\times k\) 的 \(U_k\)、\(k\) 个数、\(k\times n\) 的 \(V_k^\top\)。分母 \(mn\) 是原始矩阵的元素个数。\(k\) 小的时候收益巨大，\(k\to\min(m,n)\) 时反而比原矩阵更大——压缩只在低秩时成立。</p>
-<p>scikit-learn 的 `TruncatedSVD` 直接用截断版求解器，并且总是返回「降维后的数据」\(X V_k\)。注意它要求 <code>n_components &lt; n_features</code>：下面这个 \(A\) 只有 2 列，所以 \(k\) 只能取 1（取 2 会直接抛 <code>ValueError</code>）：</p>
+<p>scikit-learn 的 <code>TruncatedSVD</code> 直接用截断版求解器，并且总是返回「降维后的数据」\(X V_k\)。注意它要求 <code>n_components &lt; n_features</code>：下面这个 \(A\) 只有 2 列，所以 \(k\) 只能取 1（取 2 会直接抛 <code>ValueError</code>）：</p>
 <pre><code>from sklearn.decomposition import (
     TruncatedSVD)
 
@@ -439,9 +439,9 @@ R = svd.inverse_transform(Z)
 print(svd.singular_values_)   # [3.]
 print(svd.components_.shape)  # (1, 2)
 </code></pre>
-<p>`algorithm='randomized'` 是默认值（Halko–Martinsson–Tropp 的随机化算法），对稀疏、超大的矩阵比精确 SVD 快得多；`'arpack'` 走 ARPACK 迭代，适合只想算前若干个奇异值的情形。</p>
+<p><code>algorithm='randomized'</code> 是默认值（Halko–Martinsson–Tropp 的随机化算法），对稀疏、超大的矩阵比精确 SVD 快得多；<code>'arpack'</code> 走 ARPACK 迭代，适合只想算前若干个奇异值的情形。</p>
 <div class="note">
-<p>`TruncatedSVD` 的中心化：它<b>不</b>做均值中心化（这正是它和 PCA 的实现差别）。做 PCA 请用 `sklearn.decomposition.PCA`，那里会先减均值。</p>
+<p><code>TruncatedSVD</code> 的中心化：它<b>不</b>做均值中心化（这正是它和 PCA 的实现差别）。做 PCA 请用 <code>sklearn.decomposition.PCA</code>，那里会先减均值。</p>
 </div>
 
 <h2>15.12 和 PCA 是同一件事</h2>
@@ -457,10 +457,10 @@ X^\top X&=(U\Sigma V^\top)^\top(U\Sigma V^\top)\\
 \[
 Z=XV_k=U_k\Sigma_k\quad(\text{因为 }XV=U\Sigma).
 \]
-<p>两种写法等价，但右边只要乘 \(m\times k\) 与 \(k\times k\)，比左边乘 \(m\times n\) 与 \(n\times k\) 便宜——这就是 15.11 里 `fit_transform` 直接返回 \(U_k\Sigma_k\) 的原因。</p>
+<p>两种写法等价，但右边只要乘 \(m\times k\) 与 \(k\times k\)，比左边乘 \(m\times n\) 与 \(n\times k\) 便宜——这就是 15.11 里 <code>fit_transform</code> 直接返回 \(U_k\Sigma_k\) 的原因。</p>
 <p>新样本 \(\mathbf{x}\)（列向量）要投影到同一子空间：\(\mathbf{z}=V_k^\top\mathbf{x}\)。注意转置方向：数据按行存时是 \(XV_k\)，按列存时是 \(V_k^\top\mathbf{x}\)。</p>
 <div class="warn"><span class="tag">中心化不能省</span>
-<p>上面这个等价关系要求 <b>\(X\) 已经按列减过均值</b>。否则 \(X^\top X\) 里混进了均值的外积，第一主成分会退化成「均值方向」——一张全体偏亮的图，第一主成分就是亮度本身。这也解释了 15.11 里两个 API 的差别：`PCA` 会先中心化，`TruncatedSVD` 不会（它严格来说叫未中心化的 PCA / LSA）。稀疏矩阵不能随便减均值（会把 0 变成非 0，稀疏性消失），所以文本场景常用 `TruncatedSVD` 而不是 `PCA`。</p>
+<p>上面这个等价关系要求 <b>\(X\) 已经按列减过均值</b>。否则 \(X^\top X\) 里混进了均值的外积，第一主成分会退化成「均值方向」——一张全体偏亮的图，第一主成分就是亮度本身。这也解释了 15.11 里两个 API 的差别：<code>PCA</code> 会先中心化，<code>TruncatedSVD</code> 不会（它严格来说叫未中心化的 PCA / LSA）。稀疏矩阵不能随便减均值（会把 0 变成非 0，稀疏性消失），所以文本场景常用 <code>TruncatedSVD</code> 而不是 <code>PCA</code>。</p>
 </div>
 
 <h2>15.13 用 SVD 解方程、找零空间</h2>
@@ -469,7 +469,7 @@ Z=XV_k=U_k\Sigma_k\quad(\text{因为 }XV=U\Sigma).
 A^{+}=V\Sigma^{+}U^\top,\qquad
 \Sigma^{+}_{jj}=\begin{cases}1/\sigma_j,&\sigma_j>0,\\0,&\sigma_j=0.\end{cases}
 \]
-<p>\(A^+\mathbf{b}\) 给出最小二乘解，并且在解不唯一时给出<b>范数最小</b>的那个。\(A\) 可逆时 \(A^+=A^{-1}\)；\(A\) 不是方阵也能用。NumPy 里 `np.linalg.pinv(A) @ b` 就是它。</p>
+<p>\(A^+\mathbf{b}\) 给出最小二乘解，并且在解不唯一时给出<b>范数最小</b>的那个。\(A\) 可逆时 \(A^+=A^{-1}\)；\(A\) 不是方阵也能用。NumPy 里 <code>np.linalg.pinv(A) @ b</code> 就是它。</p>
 <p>看一个具体例子。三个人分气瓶的问题化成一对方程：</p>
 \[
 19J-20D=0,\qquad 6J-15D+1650=0,
@@ -611,7 +611,7 @@ A=\begin{bmatrix}0&1\\0&0\end{bmatrix},
 <ul>
 <li><b>低秩压缩</b>：图像、权重矩阵、KV cache。前提是奇异值衰减快。</li>
 <li><b>降维 / 去噪</b>：PCA、LSA（潜在语义分析，把词–文档矩阵的低秩分解当作主题）。丢掉小奇异值等于丢掉「每个样本各自的小抖动」。</li>
-<li><b>推荐系统</b>：把用户–物品评分矩阵分解成 \(U\Sigma V^\top\)，\(\mathbf{u}_i\) 与 \(\mathbf{v}_j\) 的内积预测缺失评分。真正的工业实现（如 FunkSVD、ALS）是带正则的最小二乘，不直接调 `svd`，因为评分矩阵有大片缺失。</li>
+<li><b>推荐系统</b>：把用户–物品评分矩阵分解成 \(U\Sigma V^\top\)，\(\mathbf{u}_i\) 与 \(\mathbf{v}_j\) 的内积预测缺失评分。真正的工业实现（如 FunkSVD、ALS）是带正则的最小二乘，不直接调 <code>svd</code>，因为评分矩阵有大片缺失。</li>
 <li><b>求解与求逆</b>：伪逆、最小二乘、条件数估计、秩判定。</li>
 <li><b>低秩适配</b>：LoRA 假设 \(\Delta W\) 近似低秩（见 15.15）。这与截断 SVD 是同一个假设的两种用法：一个是「先有矩阵再截断」，一个是「一开始就只允许低秩」。</li>
 </ul>
@@ -619,7 +619,7 @@ A=\begin{bmatrix}0&1\\0&0\end{bmatrix},
 <ul>
 <li><b>贵</b>：精确 SVD 是 \(O(mn\min(m,n))\) 级；且要能放进内存。超大矩阵只能用随机化 SVD 或增量方法。</li>
 <li><b>只抓线性结构</b>：SVD 看不到非线性关系；对稀疏、重尾、类别型数据，它给出的「主方向」未必有物理意义。</li>
-<li><b>不处理缺失值</b>：`svd` 要求矩阵完整，缺失必须先填补，而填补本身会引入偏差。带缺失的矩阵分解要用专门的优化（加权最小二乘、ALS）。</li>
+<li><b>不处理缺失值</b>：<code>svd</code> 要求矩阵完整，缺失必须先填补，而填补本身会引入偏差。带缺失的矩阵分解要用专门的优化（加权最小二乘、ALS）。</li>
 <li><b>不可解释</b>：奇异向量是原始特征的线性组合，系数常常没有直观含义；符号也不唯一。</li>
 <li><b>不擅长频繁更新</b>：新数据到来时精确 SVD 不能廉价增量更新，流式场景要用增量/随机算法。</li>
 </ul>
