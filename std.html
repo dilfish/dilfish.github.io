@@ -9,14 +9,17 @@
 <link rel="stylesheet" href="assets/css/math.css">
 <style>
   .std-intro{padding:.85rem 1rem;background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:0 6px 6px 0}
-  .std-grid{display:grid;gap:.8rem}
-  .std-card{padding:.8rem;border:1px solid var(--rule);border-radius:10px;background:var(--panel)}
+  .std-grid{display:grid;gap:.8rem;min-width:0}
+  .std-card{min-width:0;max-width:100%;padding:.8rem;border:1px solid var(--rule);border-radius:10px;background:var(--panel);overflow:hidden}
+  .std-card>*{max-width:100%}
+  .std-card .katex-display,.std-card .tablewrap,.std-card pre{min-width:0;max-width:100%}
   .std-card h2{margin:.1rem 0 .5rem;font-size:1.05rem}
   .std-card p:last-child{margin-bottom:0}
   .std-touch{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
   .std-touch a,.std-touch button{min-width:44px;min-height:44px;padding:.55rem .7rem;border:1px solid var(--rule);border-radius:8px;background:var(--panel);color:var(--ink);font:14px/1.3 var(--sans);text-decoration:none}
   .std-touch button{cursor:pointer}
-  .std-nowrap{white-space:nowrap;overflow-x:auto}
+  .std-nowrap{display:block;white-space:nowrap;overflow-x:auto;max-width:100%;padding:.2rem 0}
+  .std-inline-scroll{max-width:100%;overflow-x:auto;overflow-y:hidden}
   .std-long-url{overflow-wrap:anywhere;word-break:break-word}
   .std-vertical{writing-mode:vertical-rl;display:inline-block;height:5rem;padding:.4rem;border:1px solid var(--rule)}
   .std-status{font:13px/1.5 var(--mono);color:var(--muted)}
@@ -31,7 +34,7 @@
 <main>
 <article>
 <h1 id="std">360 CSS px 边缘情况测试</h1>
-<p class="std-intro">本页用于 vivo X300 Pro 的 Chrome 移动版真机检查。请在默认设置下观察：页面是否横向溢出、公式两端是否可达、表格是否能局部横滑、代码是否被裁切、触控目标是否容易点击。</p>
+<p class="std-intro">本页用于 vivo X300 Pro 的 Chrome 移动版真机检查。正常内容应完整落在屏幕内；只有明确标注“局部横滑测试”的公式、表格、代码和字符串，才应该在自己的小区域内横向滚动，而不是让整张卡片或页面一起变宽。</p>
 
 <div class="std-card">
 <h2>设备信息</h2>
@@ -44,7 +47,8 @@
 <h2>1. 普通文本与长链接</h2>
 <p>这是一段普通中文正文，用来观察 360 CSS px 宽度下的字号、行高、段落间距和中英文混排。The quick brown fox jumps over the lazy dog. 中文与 English、数学符号和数字 1234567890 混排。</p>
 <p class="std-long-url">长 URL：https://dilfish.github.io/math/15-svd.html#eckart-young-mirsky-and-a-very-long-anchor-name-for-wrapping</p>
-<p>短行内公式：\(p_i=e^{z_i}/\sum_j e^{z_j}\)。长行内公式：\(\lVert A-A_k\rVert_F/\lVert A\rVert_F=\sqrt{\sum_{j&gt;k}\sigma_j^2/\sum_{j\le r}\sigma_j^2}\)。</p>
+<p>短行内公式：\(p_i=e^{z_i}/\sum_j e^{z_j}\)。</p>
+<div class="std-inline-scroll"><p>长行内公式局部横滑测试：\(\lVert A-A_k\rVert_F/\lVert A\rVert_F=\sqrt{\sum_{j&gt;k}\sigma_j^2/\sum_{j\le r}\sigma_j^2}\)。</p></div>
 </section>
 
 <section class="std-card">
@@ -63,7 +67,7 @@ A&=U\Sigma V^\top,\\
 \lVert A-A_k\rVert_2&=\sigma_{k+1}.
 \end{aligned}
 \]
-<p>不可拆的长公式滚动测试：</p>
+<p>不可拆的长公式滚动测试（只允许公式框内部横滑）：</p>
 \[
 \operatorname{Var}\!\left(\sum_{a=1}^{d}q_a k_a\right)=\sum_{a=1}^{d}\operatorname{Var}(q_a k_a)=d\sigma^4,\qquad \frac{1}{\sqrt d}\sum_{a=1}^{d}q_a k_a.
 \]
@@ -124,7 +128,7 @@ A_k = (U[:, :k] * S[:k]) @ Vt[:k]</code></pre>
 <h2>7. 图片与特殊排版</h2>
 <figure class="fig"><img src="assets/img/svd-spectrum.svg" width="480" height="442" alt="SVD 奇异值谱测试图片"><figcaption>图片应缩放到正文宽度，不应撑破页面。</figcaption></figure>
 <p>特殊字符：← → × ÷ ± ≤ ≥ ∑ √ ∞ α β γ σ。</p>
-<p><span class="std-nowrap">这是一个故意不换行的长字符串：ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789</span></p>
+<p>这是一个故意不换行的长字符串（只允许这一行内部横滑）：<span class="std-nowrap">ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789</span></p>
 <p>竖排文字：<span class="std-vertical">触控与中文</span></p>
 </section>
 </div>
