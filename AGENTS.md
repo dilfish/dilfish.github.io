@@ -40,17 +40,18 @@ assets/
 | 物理分辨率 | 2800 × 1260（竖屏 1260 × 2800） |
 | 像素密度 | 452 PPI（官方值；√(2800² + 1260²) / 6.78 ≈ 452.9） |
 | 竖屏物理宽度 | 1260 px（长边 2800 为高度） |
-| 推断 DPR | 3.0（Android 480 dpi 密度桶；若系统按 440 dpi 桶则为 2.75） |
-| 推断 CSS 视口 | 约 **420 × 933** px（DPR 3.0 时；DPR 2.75 时约 458 × 1018） |
-| 设计基准 | 420 CSS px 宽，单列 |
+| 实测 DPR | **3.50**（Chrome 移动版，默认设置） |
+| 实测 CSS 视口 | **360 × 704** px（Chrome 页面可用视口；浏览器窗口报告屏幕尺寸 360 × 800 px） |
+| 设计基准 | **360 CSS px 宽，单列**；正文左右留白后可用宽度约 324 px |
 
-以上参数已按 vivo 官方参数页（<https://www.vivo.com.cn/vivo/param/x300pro>）与
-GSMArena 规格页核对。DPR 与 CSS 视口取决于系统「显示大小」设置，属于推断值；
-`assets/css/site.css` 里的 420 px 基准对应 DPR 3.0。
+以上物理参数已按 vivo 官方参数页（<https://www.vivo.com.cn/vivo/param/x300pro>）与
+GSMArena 规格页核对；DPR 与 CSS 视口则是在用户的 vivo X300 Pro 上用 Chrome 移动版、
+默认显示与字体设置实测得到。以后检查网页布局时，以 **360 × 704 CSS px、DPR 3.5**
+为准，不以物理分辨率或 DPR 推算可用排版宽度。
 
 排版约束：
 
-- 触控目标不小于 44 × 44 CSS px，正文跟随 420 px 视口，不写桌面宽度断点的复杂布局。
+- 触控目标不小于 44 × 44 CSS px，正文按 360 px CSS 视口单列排版，不写桌面宽度断点的复杂布局。
 - **只有浅色模式**。全站 `color-scheme: light`，不写 `prefers-color-scheme: dark`
   媒体查询，也不提供主题切换按钮；新增样式请只定义一套配色。
 
@@ -190,7 +191,7 @@ def write_png(path, rgb):                      # rgb: (h, w, 3) uint8
 ### 自造点阵字体不要用来写字
 
 手写 PNG 时如果想在图里加标签，不要自己拼点阵字体——试过 5×7 点阵 + 2 倍放大，
-在 420 px 下依然认不出来。
+在 360 px 下依然认不出来。
 
 两条正确做法：
 
@@ -217,12 +218,12 @@ k=5 的振铃和残差边缘才显现出来。
 
 ### 验证：headless 截图 + 溢出探针
 
-**直接 `--screenshot --window-size=420,N` 打开 `file://` 不会真的按 420 重排**（实测 CSS 视口
+**直接 `--screenshot --window-size=360,N` 打开 `file://` 不会真的按 360 重排**（实测 CSS 视口
 仍是默认宽度，公式不换行）。正确做法是套一层 iframe：
 
 ```html
 <!-- wrap.html，放在临时目录 -->
-<style>html,body{margin:0}iframe{width:420px;height:17000px;border:0;display:block}</style>
+<style>html,body{margin:0}iframe{width:360px;height:17000px;border:0;display:block}</style>
 <iframe src="file:///绝对路径/math/15-svd.html"></iframe>
 ```
 
@@ -230,7 +231,7 @@ k=5 的振铃和残差边缘才显现出来。
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 "$CHROME" --headless --disable-gpu --hide-scrollbars --allow-file-access-from-files \
   --virtual-time-budget=6000 --screenshot=shots/full.png \
-  --window-size=420,17000 "file:///.../wrap.html"
+  --window-size=360,17000 "file:///.../wrap.html"
 ```
 
 然后用 `sips -c <高> <宽> --cropOffset <y> 0 full.png --out seg.png` 切段看图。
@@ -252,7 +253,7 @@ document.querySelectorAll('main *').forEach(el => {
 修法：
 
 - 公式：并排的 `\qquad` 改成 `aligned` 分行，或拆成两个 `\[\]`；`underbrace` 三连改成两行。
-- 表格：列少且都是短数字时加 `class="tablewrap tight"`（去掉 `min-width:30rem`），
+- 表格：列少且都是短数字时加 `class="tablewrap tight"`；较宽表格必须明确允许局部横向滚动，
   或者干脆改成列表。
 - 代码块：每行 ≤ 50 个显示字符（CJK 按 2 算），否则 `<pre>` 必然横向滚动。
 
@@ -262,7 +263,7 @@ document.querySelectorAll('main *').forEach(el => {
 - KaTeX 字体：`assets/katex/fonts/` 必须完整，否则公式回退成系统字体。
 - 页面能直接在 `file://` 下打开（不要引入绝对路径 `/assets/...`，`gpu/`、`math/` 内一律用相对路径）。
 - 插图放 `assets/img/`，用一个 `.fig`（`<figure>` + `<img>` + `<figcaption>`）包起来；图宽按
-  420 CSS px 视口设计，单栏最宽约 384 px，三格横排在手机上必然糊，优先竖排或两格。
+  360 CSS px 视口设计，单栏最宽约 324 px，三格横排在手机上必然糊，优先竖排或两格。
   能画成 SVG 就别用位图（同样的线条在微信 / 高 DPI 下不会糊），像素级效果才用 PNG。
 - `<img>` 的 `width` / `height` 必须等于文件**真实像素尺寸**（`sips -g pixelWidth -g pixelHeight`
   或读 PNG 头）。写成缩放后尺寸会让浏览器按错误比例预留位置，图会糊或抖。

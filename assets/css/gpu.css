@@ -9,7 +9,7 @@ pre.fig{background:transparent;border:1px dashed var(--rule);color:var(--ink-sof
   font-size:12px;line-height:1.55}
 
 /* 对照表第一列固定为名词，不要换行 */
-table.cmp td:first-child{white-space:nowrap;font-weight:600}
+table.cmp td:first-child{font-weight:600}
 
 @media print{
   .file{break-after:avoid}

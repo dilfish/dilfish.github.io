@@ -2,7 +2,7 @@
  * site.css — mobile-first, tuned for one device.
  *
  * Target: 2800 × 1260 physical, 452 PPI.
- * Assumed DPR 3.0 → ~420 × 933 CSS px in portrait.
+ * Measured Chrome mobile viewport: 360 × 704 CSS px, DPR 3.5.
  * There are deliberately no desktop media queries, and no dark mode:
  * 全站只有浅色一套配色，与 assets/css/math.css 的系列页一致。
  */
@@ -31,7 +31,7 @@
 }
 
 html {
-  /* 420 CSS px wide → 17px; capped at 18px so it never grows into a desktop layout. */
+  /* Keep the home page readable on the measured 360 CSS px viewport. */
   font-size: clamp(16px, 4.05vw, 18px);
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;

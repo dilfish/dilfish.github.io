@@ -3,7 +3,7 @@
 个人文档站：纯静态 HTML/CSS，无构建步骤、无第三方运行时依赖，GitHub Pages 直接发布根目录。
 
 - 站点：https://dilfish.github.io/
-- 面向设备：vivo X300 Pro（2800 × 1260，452 PPI，约 420 × 933 CSS px），单列移动排版
+- 面向设备：vivo X300 Pro（2800 × 1260，452 PPI，Chrome 实测 360 × 704 CSS px、DPR 3.5），单列移动排版
 - 只有浅色模式
 
 ## 内容

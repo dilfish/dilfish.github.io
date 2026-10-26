@@ -96,7 +96,7 @@ M&=U\Sigma V^\top,\\
 \sigma_1&=\varphi\approx1.618,\qquad \sigma_2=\tfrac{1}{\varphi}\approx0.618 .
 \end{aligned}
 \]
-<figure class="fig">
+<figure class="fig svd-figure">
 <img src="../assets/img/svd-rotate-scale-rotate.svg" width="336" height="752" loading="lazy" alt="剪切矩阵的 SVD 三步：单位圆先被 Vᵀ 旋转，再被 Σ 沿两轴拉伸成椭圆，最后被 U 旋转回原朝向">
 <figcaption>图 1　前面那个剪切矩阵 \(M\) 作用在单位圆上，拆成三步看。<b>(A)</b> 一步到位：椭圆；(B) 先转 \(V^\top\)（蓝色虚线是旋转后的圆，蓝色箭头是 \(\mathbf{v}_1,\mathbf{v}_2\) 的方向），\(\Sigma\) 只沿坐标轴把半径拉成 \(\sigma_1,\sigma_2\)（红）；(C) 再转 \(U\)，得到的椭圆与 (A) 逐点重合（虚线压在实线上）。</figcaption>
 </figure>
@@ -242,9 +242,10 @@ V=\frac{1}{\sqrt2}\begin{bmatrix}1&1\\1&-1\end{bmatrix},\qquad V^\top V=I .
 \]
 <p><b>第五步</b>：还差 \(\mathbf{u}_3\)，要求单位长度且同时垂直于 \(\mathbf{u}_1,\mathbf{u}_2\)。注意 \(\mathbf{u}_3\perp\mathbf{u}_2\)（分量 \((1,-1,0)/\sqrt2\)）相当于前两个分量相等，设 \(\mathbf{u}_3=(a,a,c)\)；再由 \(\mathbf{u}_3^\top\mathbf{u}_1=0\) 得 \(2a+4c=0\)，即 \(a=-2c\)。取 \(c=\frac13\) 归一化得</p>
 \[
-\mathbf{u}_3=\frac{1}{3}\begin{bmatrix}-2\\-2\\1\end{bmatrix},
-\qquad
-\mathbf{u}_3\cdot\mathbf{u}_1=\tfrac{-2-2+4}{3\sqrt{18}}=0 .
+\mathbf{u}_3=\frac{1}{3}\begin{bmatrix}-2\\-2\\1\end{bmatrix}.
+\]
+\[
+\mathbf{u}_3\cdot\mathbf{u}_1=\frac{-2-2+4}{3\sqrt{18}}=0 .
 \]
 <p>于是</p>
 \[
@@ -253,19 +254,23 @@ U&=\begin{bmatrix}
 \frac{1}{\sqrt{18}}&\frac{1}{\sqrt2}&-\frac23\\[2pt]
 \frac{1}{\sqrt{18}}&-\frac{1}{\sqrt2}&-\frac23\\[2pt]
 \frac{4}{\sqrt{18}}&0&\frac13
-\end{bmatrix},
-\qquad
-\Sigma=\begin{bmatrix}3&0\\0&1\\0&0\end{bmatrix},\\[6pt]
-V^\top&=\frac{1}{\sqrt2}\begin{bmatrix}1&1\\1&-1\end{bmatrix},
-\qquad A=U\Sigma V^\top .
+\end{bmatrix}.
 \end{aligned}
+\]
+\[
+\Sigma=\begin{bmatrix}3&0\\0&1\\0&0\end{bmatrix},
+\qquad
+V^\top=\frac{1}{\sqrt2}\begin{bmatrix}1&1\\1&-1\end{bmatrix}.
+\]
+\[
+A=U\Sigma V^\top .
 \]
 <p><b>验算</b>：\(\lVert A\rVert_F^2=1+0+0+1+4+4=10\)，而 \(\sigma_1^2+\sigma_2^2=9+1=10\)，一致。</p>
 <p><b>秩 1 近似</b>：只保留最大的切片 \(\sigma_1\mathbf{u}_1\mathbf{v}_1^\top\)：</p>
 \[
 \begin{aligned}
-A_1&=\sigma_1\mathbf{u}_1\mathbf{v}_1^\top
-=3\cdot\frac{1}{\sqrt{18}}\begin{bmatrix}1\\1\\4\end{bmatrix}
+A_1&=\sigma_1\mathbf{u}_1\mathbf{v}_1^\top\\
+&=3\cdot\frac{1}{\sqrt{18}}\begin{bmatrix}1\\1\\4\end{bmatrix}
   \cdot\frac{1}{\sqrt2}\begin{bmatrix}1&1\end{bmatrix}\\
 &=\begin{bmatrix}0.5&0.5\\0.5&0.5\\2&2\end{bmatrix}.
 \end{aligned}
@@ -311,11 +316,11 @@ A_1&=\sigma_1\mathbf{u}_1\mathbf{v}_1^\top
 
 <h2>15.10 数值实验：奇异值衰减有多快</h2>
 <p>下面用一个 400×300 的合成灰度图做实验：四个硬边色块（高对比、位置规则）+ 一条细竖条纹带（高频）+ 标准差 2 的轻噪声。取「硬边」而不是平滑渐变，是因为真实的权重矩阵、注意力图也是这种「大块结构 + 少量高频」的形态；平滑渐变会让 SVD 显得比实际更强。完整代码在 15.11。</p>
-<figure class="fig">
+<figure class="fig svd-figure">
 <img src="../assets/img/svd-lowrank.png" width="1060" height="360" loading="lazy" alt="原图与 k=5、20、100 的 SVD 重建对比：k=5 时硬边出现振铃，k=100 肉眼难辨">
 <figcaption>图 2　原图与截断重建。\(k=5\) 时硬边周围出现明显的波纹（振铃），\(k=20\) 时基本消失，\(k=100\) 与 \(400\times300\) 的满秩重建几乎无法区分。</figcaption>
 </figure>
-<figure class="fig">
+<figure class="fig svd-figure">
 <img src="../assets/img/svd-residual.png" width="800" height="360" loading="lazy" alt="残差图，按 3 倍增益显示：k=5 时残差集中在边缘，k=100 时只剩噪声">
 <figcaption>图 3　残差 \(|A-A_k|\)（为了看得见，整体放大 3 倍）。丢掉的不是「随机噪声」，而是<b>边缘</b>——奇异值小的方向恰好承载了高频信息。</figcaption>
 </figure>
