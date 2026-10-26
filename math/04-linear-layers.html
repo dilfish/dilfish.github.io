@@ -34,14 +34,14 @@
 <tr><td>gate_proj</td><td>\(3072\times1024\)</td><td class="num">3,145,728</td></tr>
 <tr><td>up_proj</td><td>\(3072\times1024\)</td><td class="num">3,145,728</td></tr>
 <tr><td>down_proj</td><td>\(1024\times3072\)</td><td class="num">3,145,728</td></tr>
-<tr><td>4 个 norm 的 \(\gamma\)</td><td>\(1024\) 每个</td><td class="num">4,096</td></tr>
-<tr><td><b>每层合计</b></td><td></td><td class="num"><b>15,732,736</b></td></tr>
+<tr><td>4 个 norm 的 \(\gamma\)</td><td>两个 \(1024\)，两个 \(128\)</td><td class="num">2,304</td></tr>
+<tr><td><b>每层合计</b></td><td></td><td class="num"><b>15,730,944</b></td></tr>
 </tbody></table></div>
-<p>28 层：\(15{,}732{,}736\times28=440{,}516{,}608\)。embedding 是 \(151936\times1024=155{,}582{,}464\)，且 <code>tie_word_embeddings=true</code>，lm_head 与它共享，不重复计。总计</p>
+<p>28 层：\(15{,}730{,}944\times28=440{,}466{,}432\)。embedding 是 \(151936\times1024=155{,}582{,}464\)，且 <code>tie_word_embeddings=true</code>，lm_head 与它共享，不重复计。总计</p>
 \[
-440{,}516{,}608+155{,}582{,}464=596{,}099{,}072\approx0.596\text{B}.
+440{,}466{,}432+155{,}582{,}464=596{,}048{,}896\approx0.596\text{B}.
 \]
-<p>这就是“0.6B”的来历。用 float32 存：\(596{,}099{,}072\times4=2{,}384{,}396{,}288\) 字节 \(\approx2.22\) GiB，和 TODO 里“常驻 2.2 GB”一致；bf16 存储则约 1.19 GB（safetensors 文件 1.4 GB 左右，还含少量元数据和对齐）。</p>
+<p>这就是“0.6B”的来历。用 float32 存：\(596{,}048{,}896\times4=2{,}384{,}195{,}584\) 字节 \(\approx2.22\) GiB，和 TODO 里“常驻 2.2 GB”一致；bf16 存储则约 1.19 GB（safetensors 文件 1.4 GB 左右，还含少量元数据和对齐）。</p>
 
 <h2>4.3 每 token 的 FLOP 估算</h2>
 <p>按 4.1 的 \(2mn\)：</p>

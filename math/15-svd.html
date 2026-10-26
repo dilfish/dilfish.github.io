@@ -109,7 +109,7 @@ M&=U\Sigma V^\top,\\
 \end{aligned}
 \]
 <p>行列式 1 说明面积没变（剪切确实不改面积），\(\kappa\) 叫<b>条件数</b>，说这个方向上「拉长」和「压短」差了 2.618 倍——它衡量这个线性变换有多「扁」，后面 15.11 会用。</p>
-<p>圆的像在椭圆上的对应关系很直观：半径方向被拉得<i>最多</i>的那条，倍数正好是 \(\sigma_1\)；拉得<i>最少</i>的那条，倍数正好是 \(\sigma_n\)。如果某个 \(\sigma_i=0\)，说明这个方向被压成了 0——球在这个维度上被拍扁了，矩阵不满秩。</p>
+<p>圆的像在椭圆上的对应关系很直观：半径方向被拉得<i>最多</i>的那条，倍数正好是 \(\sigma_1\)；在非零奇异值的范围内，拉得<i>最少</i>的那条，倍数由 \(\sigma_p\) 给出，其中 \(p=\min(m,n)\)。如果某个 \(\sigma_i=0\)，说明这个方向被压成了 0——球在这个维度上被拍扁了，矩阵不满秩。</p>
 
 <h2>15.5 从图像推出公式</h2>
 <p>上面的几何描述，可以原封不动地写成代数。设输入空间 \(\mathbb{R}^n\) 有一组正交单位基 \(\mathbf{v}_1,\dots,\mathbf{v}_n\)（就是「转回去」之后的那组坐标轴）。因为它们是正交单位基，任何向量都能这样展开（就是在做投影）：</p>
@@ -120,7 +120,7 @@ M&=U\Sigma V^\top,\\
 \[
 M\mathbf{x}=\sum_{j=1}^{n}(\mathbf{x}\cdot\mathbf{v}_j)\,M\mathbf{v}_j .
 \]
-<p>几何上，我们要求 \(M\) 在 \(\mathbf{v}_j\) 这个方向上「只拉伸不转弯」：\(M\mathbf{v}_j\) 与 \(\mathbf{v}_j\) 同向，长度是 \(\sigma_j\) 倍。但输出空间可能是 \(\mathbb{R}^m\)，方向不一定是 \(\mathbf{v}_j\)，所以给输出方向另起个名字 \(\mathbf{u}_j\)（单位向量）：</p>
+<p>几何上，我们要求输入方向 \(\mathbf{v}_j\) 经过 \(M\) 后只产生一个确定的输出方向，长度缩放为 \(\sigma_j\) 倍。由于输出空间可能是 \(\mathbb{R}^m\)，输出方向和输入方向不在同一个空间，所以给它另起个名字 \(\mathbf{u}_j\)（单位向量）：</p>
 \[
 M\mathbf{v}_j=\sigma_j\mathbf{u}_j .
 \]
@@ -131,9 +131,9 @@ M\mathbf{x}=\sum_{j=1}^{n}\sigma_j\,\mathbf{u}_j\,(\mathbf{v}_j^\top\mathbf{x})
 \]
 <p>这个式子对任意 \(\mathbf{x}\) 都成立，所以括号里的矩阵就是 \(M\) 本身：</p>
 \[
-\boxed{M=\sum_{j=1}^{n}\sigma_j\,\mathbf{u}_j\mathbf{v}_j^\top=U\Sigma V^\top}
+\boxed{M=\sum_{j=1}^{p}\sigma_j\,\mathbf{u}_j\mathbf{v}_j^\top=U\Sigma V^\top}
 \]
-<p>其中 \(U=[\mathbf{u}_1\ \cdots\ \mathbf{u}_m]\)、\(V=[\mathbf{v}_1\ \cdots\ \mathbf{v}_n]\) 是正交矩阵，\(\Sigma\) 是把 \(\sigma_1\ge\cdots\ge\sigma_n\ge0\) 摆在左上角、其余补零的 \(m\times n\) 矩阵。</p>
+<p>其中 \(U=[\mathbf{u}_1\ \cdots\ \mathbf{u}_m]\)、\(V=[\mathbf{v}_1\ \cdots\ \mathbf{v}_n]\) 是正交矩阵，\(p=\min(m,n)\)，\(\Sigma\) 是把 \(\sigma_1\ge\cdots\ge\sigma_p\ge0\) 摆在左上角、其余补零的 \(m\times n\) 矩阵。</p>
 <p>每一项 \(\sigma_j\mathbf{u}_j\mathbf{v}_j^\top\) 是一个秩 1 矩阵：把输入往 \(\mathbf{v}_j\) 方向投影、乘 \(\sigma_j\)、再送到 \(\mathbf{u}_j\) 方向。所以 SVD 的意思也可以说成：</p>
 <div class="key"><span class="tag">另一种说法</span>
 <p>任何矩阵都是若干个「秩 1 切片」的加权和，权重就是奇异值。这也是为什么「丢掉最小的那些切片」等于「低秩近似」。</p>
@@ -154,7 +154,7 @@ M\mathbf{x}=\sum_{j=1}^{n}\sigma_j\,\mathbf{u}_j\,(\mathbf{v}_j^\top\mathbf{x})
 <p>几个立刻能读出来的性质：</p>
 <ul>
 <li><b>秩</b>：非零奇异值的个数 \(r=\#\{j:\sigma_j>0\}\) 等于 \(\operatorname{rank}A\)。</li>
-<li><b>零空间</b>：\(\sigma_j=0\) 对应的 \(\mathbf{v}_j\) 张成 \(A\) 的零空间（\(n-r\) 维）；对应的 \(\mathbf{u}_j\) 张成左零空间（\(m-r\) 维）。</li>
+<li><b>零空间</b>：\(\mathbf{v}_{r+1},\dots,\mathbf{v}_n\) 张成 \(A\) 的零空间（\(n-r\) 维）；\(\mathbf{u}_{r+1},\dots,\mathbf{u}_m\) 张成左零空间（\(m-r\) 维）。后者包含矩形矩阵因补齐尺寸而增加的左奇异向量，并不都对应 \(\Sigma\) 对角线上的一个独立奇异值。</li>
 <li><b>值域</b>：\(\{\mathbf{u}_1,\dots,\mathbf{u}_r\}\) 是列空间的一组正交基。</li>
 <li><b>Frobenius 范数</b>：\(\lVert A\rVert_F^2=\sum_{i,j}A_{ij}^2=\sum_j\sigma_j^2\)。所有「能量」都记在奇异值上。</li>
 <li><b>谱范数</b>：\(\lVert A\rVert_2=\sigma_1=\max_{\mathbf{x}\ne0}\lVert A\mathbf{x}\rVert_2/\lVert\mathbf{x}\rVert_2\)，即最大拉伸倍数。</li>
@@ -289,7 +289,7 @@ A_1&=\sigma_1\mathbf{u}_1\mathbf{v}_1^\top
 <li><b>compact（经济型）</b>：只保留前 \(r\) 个（\(\sigma_j>0\)）。尺寸 \(m\times r\)、\(r\times r\)、\(r\times n\)。精确重构，省掉补零部分。</li>
 <li><b>truncated（截断）</b>：只保留前 \(k\le r\) 个（最大的一批）。尺寸 \(m\times k\)、\(k\times k\)、\(k\times n\)。用于低秩近似、压缩、降维。</li>
 </ul>
-<p>NumPy 的 <code>svd</code> 默认 <code>full_matrices=True</code>，返回 full 形式：\(U\) 是 \(m\times m\)、\(V^\top\) 是 \(n\times n\)，多出来的那几列不参与重构（它们张成左/右零空间）。设 <code>full_matrices=False</code> 才得到 compact 形式：\(U\) 是 \(m\times p\)、\(V^\top\) 是 \(p\times n\)，\(p=\min(m,n)\)。要截断就自己切前 \(k\) 列。注意 \(V^\top\) 是<b>转置</b>后的，行才是右奇异向量，这一点最容易写错。</p>
+<p>NumPy 的 <code>svd</code> 默认 <code>full_matrices=True</code>，返回 full 形式：\(U\) 是 \(m\times m\)、\(V^\top\) 是 \(n\times n\)，多出来的列不参与重构（它们补足左右零空间的正交基）。设 <code>full_matrices=False</code> 得到的是 reduced/economy 形式：\(U\) 是 \(m\times p\)、\(V^\top\) 是 \(p\times n\)，\(p=\min(m,n)\)。它不会根据数值秩自动删掉接近 0 的奇异值；若要得到前面定义的 compact 形式，还需按秩阈值保留对应部分。要做截断近似则自己切前 \(k\) 列。注意 \(V^\top\) 是<b>转置</b>后的，行才是右奇异向量，这一点最容易写错。</p>
 <p>为什么「砍掉小的」是合理的？下面这个定理是全部低秩近似的依据。</p>
 <div class="key"><span class="tag">Eckart–Young–Mirsky</span>
 <p>设 \(A_k=\sum_{j\le k}\sigma_j\mathbf{u}_j\mathbf{v}_j^\top\)，则对所有秩不超过 \(k\) 的矩阵 \(B\)：</p>
@@ -354,7 +354,7 @@ A = np.array([[1., 0.],
               [0., 1.],
               [2., 2.]])
 
-# compact 形式：U 是 3x2，Vt 是 2x2
+# reduced/economy 形式：U 是 3x2，Vt 是 2x2
 U, S, Vt = np.linalg.svd(A,
                          full_matrices=False)
 print(S)                        # [3. 1.]
@@ -494,7 +494,7 @@ A=\begin{bmatrix}19&-20&0\\6&-15&1650\end{bmatrix}.
 </div>
 
 <h2>15.14 最小二乘的几何：投影到列空间</h2>
-<p>上一节的例子里 \(A\) 是方的、可逆的，零空间那一条是「加了一列常数项」造成的。更有代表性的是 \(A\mathbf{x}=\mathbf{b}\) <b>无解</b>的情形：\(m\gt n\) 时方程的个数多于未知数，\(\mathbf{b}\) 一般不在 \(A\) 的列空间里。</p>
+<p>上一节的例子是一个 \(2\times3\) 的欠定齐次系统；最后一列常数项把原来的非齐次方程改写成了齐次方程，因此出现了一维零空间。更有代表性的是 \(A\mathbf{x}=\mathbf{b}\) <b>无解</b>的情形：\(m\gt n\) 时方程的个数多于未知数，\(\mathbf{b}\) 一般不在 \(A\) 的列空间里。</p>
 <p>此时我们退一步，找让残差最小的 \(\mathbf{x}\)：</p>
 \[
 \min_{\mathbf{x}}\ \lVert A\mathbf{x}-\mathbf{b}\rVert_2 .
