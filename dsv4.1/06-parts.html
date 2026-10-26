@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>6. 其余部件：MoE、mHC、Engram、DSpark · DSv4.1 架构导读</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='16' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EK%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="06-parts.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">DSv4.1 Flash 架构导读</a>
+</header>
+<main>
+<article>
+<h1>6. 其余部件：MoE、mHC、Engram、DSpark</h1>
+
+<h2>6.1 四个和 KV 无关的部件</h2>
+<p>前五章都在讲注意力那一块。报告里还有四个模块，它们不省 KV，但决定了这个模型能不能在 552B 参数下跑出 8B/16B 的激活量。这一章每个只讲"它替换了两本书里的什么"和"它的数学在哪一步"。</p>
+<pre class="fig">bllm 里的组件       V4.1 的替换
+FFN (SwiGLU)        MoE 384 选 6
+残差 x + F(x)       mHC 4 条流
+(无)                Engram 查表
+逐 token 生成        DSpark 草稿</pre>
+
+<h2>6.2 MoE：把 FFN 换成一排专家</h2>
+<p>bllm 4.3 节的 Transformer 块里，注意力后面是一个前馈网络（FFN），每个 token 都过它。MoE（专家混合，mixture of experts）把它换成 \(N\) 个并列的 FFN，每个 token 只走其中 \(k\) 个。</p>
+<p>报告的参数：384 个路由专家、每个 token 选 6 个，专家中间维 2304，主干隐维 5120。先把"参数量"和"激活量"分开算清楚——这是 MoE 最容易混淆的地方。</p>
+<ul>
+<li><b>一个专家多少参数</b>：SwiGLU 是三块矩阵（门、值、输出），\(3\times 5120\times 2304=35{,}389{,}440\approx35.4\text{M}\)。</li>
+<li><b>一层的专家总量</b>：\(35.4\text{M}\times 384=13.59\text{B}\)。</li>
+<li><b>40 层</b>：\(13.59\text{B}\times 40=543.6\text{B}\)。</li>
+</ul>
+<p>报告说主干参数 552B。专家占了 543.6B，也就是 <b>98.5%</b>，剩下的约 8B 是注意力、嵌入和路由。这个比例解释了为什么叫"稀疏"模型：参数几乎全在专家里，但每个 token 只碰其中 6 个。</p>
+<p>激活量：\(6\times35.4\text{M}=212\text{M}\) 是每层专家部分，加上注意力，每层约 400M（由报告口径反推：decode 16B ÷ 40 层）。于是</p>
+\[
+\text{prefill}: 20\times400\text{M}=8\text{B},
+\]
+\[
+\text{decode}: 40\times400\text{M}=16\text{B}.
+\]
+<p>正好是 2 倍关系——不是巧合，是 CED 的直接结果（第 3 章）：prefill 只走 20 层。</p>
+<p>两个训练细节值得知道。路由打分用 <code>sqrtsoftplus</code> 而不是 softmax（分数不必归一化，只用于选 Top-6 与加权）；多模态输入时为<b>文本和图像各维护一组逐专家校正偏置</b>，因为两种模态的专家偏好不同，混在一起平衡会掩盖各模态内部的不均衡。</p>
+
+<h2>6.3 mHC：把残差从一条流变成四条</h2>
+<p>bllm 4.4 节的残差连接是 \(x_{l+1}=x_l+\mathcal F_l(x_l)\)：一条残差流，加法，恒等映射。mHC（multi-head residual channels，多流残差）把它扩成 \(n=4\) 条流，并让"怎么混合"变成可学习的：</p>
+\[
+X_{l+1}=B_lX_l+C_l\,\mathcal F_l(A_lX_l),
+\]
+\[
+(A_l,B_l,C_l)=\mathcal H(X_l),
+\]
+<p>其中 \(X_l\in\mathbb{R}^{n\times d}\) 是 \(n\) 条 \(d\) 维残差流，\(A_l\in\mathbb{R}^{1\times n}\) 决定"从 4 条流里怎么读成 1 条送进子层"，\(C_l\in\mathbb{R}^{n\times1}\) 决定"子层输出怎么写回 4 条流"，\(B_l\in\mathbb{R}^{n\times n}\) 决定"4 条流彼此怎么混合"。\(n=1\) 时三者退化成 1，式子就回到 bllm 的残差。</p>
+<p><b>为什么要约束 \(B_l\) 是双随机矩阵</b>（每行每列之和都是 1）。残差路径上的梯度是连乘：\(\partial X_L/\partial X_0=\prod_l B_l\)。若 \(B_l\) 是任意矩阵，这个连乘会随深度指数爆炸或消失——正是 bllm 6.x 节讲残差时"梯度连乘"的同一个问题。而双随机矩阵的谱范数不超过 1（因为它是置换矩阵的凸组合，见下），于是</p>
+\[
+\|B_l\|_2\le 1
+\quad\Longrightarrow\quad
+\Big\|\prod_{l}B_l\Big\|_2\le 1 ,
+\]
+<p>连乘不发散。这是"范数保持"版本的残差：普通残差是 \(B_l=I\)（最稳但最死板），mHC 是"在双随机矩阵里学一个"（稳但可学）。</p>
+<p><b>Sinkhorn 怎么把任意矩阵变成双随机矩阵</b>。给定打分矩阵 \(S\)，先取 \(M=\exp(S)\)（逐元素，所以全正），然后交替归一化行和列：</p>
+\[
+u^{(k+1)}=\mathbf 1\oslash\big(Mv^{(k)}\big),
+\]
+\[
+v^{(k+1)}=\mathbf 1\oslash\big(M^{\top}u^{(k+1)}\big),
+\]
+\[
+B=\operatorname{diag}(u)\,M\operatorname{diag}(v).
+\]
+<p>（\(\oslash\) 是逐元素除法。）每归一化一次行，列和就被破坏；再归一化列，行和又被破坏。但对全正矩阵这个交替过程收敛，极限是一个行和列都为 1 的矩阵。报告的 <code>hc_sinkhorn_iters=20</code> 就是迭代 20 次后截断。</p>
+<div class="key"><span class="tag">判断方法</span>
+<p>为什么值得收敛到双随机而不是别的？因为有 Birkhoff–von Neumann 定理：<b>双随机矩阵恰好是所有置换矩阵的凸包</b>。所以 \(B_l\) 可以读作"对 4 条流做一次软的、连续的重新排序"——把"哪个槽位放哪条信息"变成可微的选择。这是 \(n=1\) 的残差做不到的。</p>
+</div>
+<p><b>Single-Pass 改的是一行代码</b>。原式里 \(A_l=\mathcal H(X_l)\) 依赖 \(X_l\)，而 \(A_lX_l\) 又要立刻用，于是"算系数"和"用系数"必须在同一个 kernel 里串行完成，没法融合。报告的改法是把输入混合系数挪一格：</p>
+\[
+X_{l+1}=B_lX_l+C_l\,\mathcal F_l(\underbrace{A_{l-1}}_{\text{上一块}}X_l),
+\]
+<p>代价是 \(A\) 落后一个块（第 \(l\) 块用第 \(l-1\) 块的系数），收益是"系数计算"与"子层计算"解耦，两个 kernel 可以各自融合、减少一次读写。这是一个纯粹的工程折中，数学上没有新东西。</p>
+
+<h2>6.4 Engram：把"背下来的短语"放进一张表</h2>
+<p>两本书的模型把一切知识都放在参数里，用计算去取。Engram 加了一条边路：<b>用 n-gram 直接当索引进一张巨大的嵌入表</b>，查到的东西作为残差加回当前位置。</p>
+<ul>
+<li>阶数 \(n\in\{2,3,4\}\)：取以当前位置结尾的 2-gram、3-gram、4-gram。</li>
+<li>每阶 8 个哈希头，每头 256 维，合计 \(8\times256=2048\) 维。</li>
+<li>每头一张约 16M 条目的表，各表大小取<b>互不相同的素数</b>（减少不同阶撞到同一条的概率）。</li>
+<li>两张表共 196B 参数，注入在<b>第 1 层与第 14 层</b>，嵌入与投影用 FP8。</li>
+</ul>
+<p>数学上它就是一个哈希寻址：把 n-gram 的 token id 元组映射成行号，取一行向量。没有点积、没有 softmax，所以它<b>不消耗注意力的预算</b>——代价全在存储上。这也是为什么它能做到 196B 参数却几乎不影响 decode 的算力：查表是 \(O(1)\)，而且行号是确定的，可以在计算第一个 Transformer 块的同时用后台 RDMA 从主机内存预取。</p>
+<p>它和注意力的分工，用一句话说：<b>注意力负责"这次上下文里出现过什么"，Engram 负责"这种短语在训练语料里通常接什么"</b>。第一层 SWA 的输出给 Engram 提供上下文门控（同一个 2-gram 在不同句子里权重不同），第二层 SWA 再把注入后的表示整合进局部上下文——这就是为什么它插在第 1 层之后、而不是插在最前面。</p>
+
+<h2>6.5 DSpark：投机解码的期望收益</h2>
+<p>decode 的瓶颈是带宽（2.1 节）。投机解码的思路：先让一个便宜的小模型猜 \(\gamma\) 个 token，再让大模型<b>一次前向验证这 \(\gamma\) 个位置</b>。验证的算术强度和一次只生成 1 个 token 差不多，所以只要猜得够准，就赚了。</p>
+<p>DSpark 的草稿模型是 3 个 SWA-128 的 Transformer 块，每层用 128 个专家里的 Top-3；它读主干第 37、38、39 层入口处四条残差流的均值，<b>一次并行算出 5 个草稿位置</b>（不是自回归地一个个算），再用一个轻量 Markov 头补上草稿 token 之间的依赖，用 confidence 头决定这次验证几个。</p>
+<p>收益能算。设每个草稿 token 被接受的概率是 \(\alpha\)，接受是独立的，\(\gamma=5\)。一次前向输出 \(k\) 个 token 的概率是"前 \(k\) 个都接受、第 \(k+1\) 个被拒"，所以平均输出长度</p>
+\[
+\mathbb E[\text{tokens}]
+=\sum_{k=1}^{\gamma}\Pr(\text{至少接受 }k)
+=\sum_{k=1}^{\gamma}\alpha^{k}
+\]
+\[
+=\frac{\alpha\,(1-\alpha^{\gamma})}{1-\alpha}.
+\]
+<p>若把"全部接受"也算进去（第 \(\gamma+1\) 个由主模型补上），上界写成 \(1+\alpha+\dots+\alpha^{\gamma}\)：</p>
+\[
+\frac{1-\alpha^{\gamma+1}}{1-\alpha} .
+\]
+<p>代入：\(\alpha=0.8,\gamma=5\) 得 \(3.69\) 个 token/次前向；\(\alpha=0.9\) 得 \(4.69\)。也就是说，理想情况下 decode 提速 3.7–4.7 倍——这是"每步搬同样的 KV、但多出几个 token"的直接结果，和第 2 章那条带宽账正好互补。</p>
+<p>两个工程点：草稿块的 MoE 只有 128 个专家（草稿要便宜），且 DSpark 是在预训练之后单独训练、后训练阶段与主干一起训但不把梯度回传给主干——这样它始终跟着当前策略走。</p>
+
+<h2>6.6 容易算错的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li><b>把 384 个专家都算进激活量</b>。激活的是 6 个；384 是<b>存储</b>。</li>
+<li><b>用 552B 除 40 层再乘 6/384 估算激活量</b>。那是"按比例缩放",会得到约 0.86B，明显不对；正确做法是按"6 个专家 × 单专家参数 + 注意力"逐层算。</li>
+<li><b>把 Sinkhorn 当成"归一化一次"</b>。行归一化会破坏列和，必须交替；20 次是收敛速度与 kernel 开销的折中。</li>
+<li><b>把 Engram 当成注意力的一种</b>。它没有查询、没有加权，只有确定性的哈希寻址；它提供的是"记忆",不是"检索"。</li>
+<li><b>用 \(\alpha^\gamma\) 算投机解码的平均长度</b>。那是"全部接受"的概率；期望长度是几何级数和 \(\sum\alpha^k\)。</li>
+</ul>
+</div>
+</article>
+</main>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

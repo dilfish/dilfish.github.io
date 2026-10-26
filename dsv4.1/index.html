@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>DeepSeek-V4.1 Flash 架构导读：从两本书接上去</title>
+<meta name="description" content="以《Build a Large Language Model (From Scratch)》与《Build a Reasoning Model (From Scratch)》为起点，逐步接到 DeepSeek-V4.1 Flash 的 CED、CSA2、HSI 与每 token 890 字节的 KV Cache，附完整数学推导。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='16' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EK%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="index">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">DSv4.1 Flash 架构导读</a>
+</header>
+<main>
+<article>
+<p class="crumb"><a href="../index.html">全部文档</a><span class="sep">/</span><span>系列目录</span></p>
+<h1>DeepSeek-V4.1 Flash：从两本书接上去</h1>
+<div class="plainbox">
+<p>这一页写给这样的读者：<b>读过《Build a Large Language Model (From Scratch)》和《Build a Reasoning Model (From Scratch)》，微积分和线代学过但计算细节忘了</b>。所以不假设你记得 softmax 的导数、凸组合的定义、矩阵吸收的推导；每用一个概念，就在原地重新定义一遍，再用这一节自己的数字验算。</p>
+<p>两本书带你到的地方是"一层标准的因果自注意力 + KV cache + 采样"。DeepSeek-V4.1 Flash 的技术报告则默认你已经知道 <b>MLA 的潜在向量、滑动窗口、稀疏 Top-K 检索、跨层 KV 复用、FP4 量化、专家混合</b>。中间那一段就是这七篇要补的：每补一个，都标出它对应两本书的哪一节，以及它在 KV 账单上省掉了多少字节。</p>
+<p>全篇围绕技术报告的一句话展开：<b>KV Cache 的成本是三个因子的乘积</b>，而 V4.1 Flash 把三个因子各自压了一次。</p>
+</div>
+
+<h2>三把旋钮</h2>
+<p>后面每一章只回答一个问题：这三个因子里的哪一个被动了，动了多少。</p>
+<pre class="fig">KV 字节 = 条目 x 条数 x 层数
+
+条目 <- 1 章  GQA / MLA
+        4.4 节 FP4
+条数 <- 2 章  窗口 / 稀疏
+        4.2 节 压缩比 m
+层数 <- 3 章  CED
+        4.3 节 跨层复用</pre>
+<p>写成公式就是报告里那行（第 1 章会把它逐项对上字节）：</p>
+\[
+\text{KV 总成本}
+=\underbrace{d_{\text{entry}}}_{\text{条目}}
+\times\underbrace{\frac{N}{m}}_{\text{条数}}
+\times\underbrace{L_{\text{eff}}}_{\text{层数}} .
+\]
+<div class="key"><span class="tag">结论</span>
+<p>三个因子是乘法关系，所以任一项减半，总账单就减半；V4.1 Flash 的 890 B/token 是三项同时动手的结果，不是某一项特别神奇。</p>
+</div>
+
+<h2>怎么读</h2>
+<ul>
+<li><b>第一次</b>：0 → 8 顺序读。第 0 章是地图，第 1 章决定后面所有字节数，第 5 章是全篇的数学核心。</li>
+<li><b>只想看懂结论</b>：第 0 章的对照表 + 第 4.4 节的 890 字节账 + 附录 A。</li>
+<li><b>只想看数学</b>：第 5 章（凸组合、softmax 的 Jacobian、指数倾斜、像集是相对内部）。这一章不依赖前四章的具体结构，但依赖你已经知道注意力是什么。</li>
+<li><b>手边开着两本书</b>：每节开头都写了"对应 bllm 第几章 / barm 第几节"；没读到的部分可以先跳到本节末尾的"判断方法"看结论。</li>
+</ul>
+
+<h2>章节</h2>
+<ul class="index">
+<li><div class="row"><span class="n">0</span><a href="00-map.html">你手里的两本书，够用在哪、缺在哪</a></div>
+<p class="note">两本书的目录逐条对上报告：哪些概念已经会了（注意力、因果掩码、KV cache、采样），哪些是新的（MLA 潜在向量、SWA、稀疏索引、跨层复用、FP4、MoE）。一张对照表 + 一条最短路径。</p></li>
+
+<li><div class="row"><span class="n">1</span><a href="01-entry.html">条目大小：一条 KV 到底占多少字节</a></div>
+<p class="note">从 barm 2.8 的 KV cache 出发，把一条条目从 131,072 B（64 个 KV 头的 MHA）压到 1,024 B（一个 512 维潜在向量）；MLA 的"矩阵吸收"为什么成立；64 维 RoPE + 448 维 NoPE 的来历。</p></li>
+
+<li><div class="row"><span class="n">2</span><a href="02-sequence.html">序列维度：滑动窗口与稀疏检索</a></div>
+<p class="note">全局注意力为什么在 1M 上下文下必然爆掉；窗口 128 的真实感受野（两层 255，20 层 2560）；Indexer 的打分公式与 Top-512；为什么 decode 每步只读 640 条。</p></li>
+
+<li><div class="row"><span class="n">3</span><a href="03-ced.html">层维度（上）：CED 把 prefill 减半</a></div>
+<p class="note">YoCo 的核心：KV 只由第 20 层产出，后 20 层用各自的投影去读。prefill 计算量比 \\(1/2+B/2N\\) 的推导，N=32768 时 50.2%；bounded replay 为什么只回放最后 128 个位置。</p></li>
+
+<li><div class="row"><span class="n">4</span><a href="04-csa2.html">层维度（下）：CSA2 与每 token 890 字节</a></div>
+<p class="note">压缩比 m=2 的合并、m=1 的退化；Full / Reindex / Reuse 三种模式的两个指示量；FP4 的 288 B 与 68 B 逐项算；从 3514 B/token 到 890 B/token 的四步；HSI 候选池 16384 个位置怎么来的。</p></li>
+
+<li><div class="row"><span class="n">5</span><a href="05-query.html">只改 Q 为什么够：注意力是指数族</a></div>
+<p class="note">全篇数学核心。输出是凸组合；softmax 的 Jacobian 就是协方差；改 Q 等于对基线分布做指数倾斜；可达倾斜空间的维数只有 512；像集恰是顶点集凸包相对内部；Reuse 相比 Full 缺的三件事。</p></li>
+
+<li><div class="row"><span class="n">6</span><a href="06-parts.html">其余部件：MoE、mHC、Engram、DSpark</a></div>
+<p class="note">384 选 6 与 8B/16B 激活参数的对应；mHC 的 4 条残差流与 Sinkhorn 迭代为什么收敛到双随机矩阵；Engram 的 n-gram 哈希查表；DSpark 的期望接受长度 \\((1-\alpha^{\gamma+1})/(1-\alpha)\\)。</p></li>
+
+<li><div class="row"><span class="n">7</span><a href="07-vision.html">视觉路径：一张图怎么变成 602 个 token</a></div>
+<p class="note">从 bllm 的 token embedding 接过去：patch 14、预算公式 \\(h'(w'+1)+2\\)、1344² 为什么会被打回 1302²、5184 → 576 的 3×3 重排、2D RoPE、多模态的两组专家偏置。</p></li>
+
+<li><div class="row"><span class="n">8</span><a href="08-train-deploy.html">训练与部署：三个阶段、两个口径、三个时钟域</a></div>
+<p class="note">预训练（64K→1M，无 HSI）与后训练（HSI + FP4 QAT）的分工；Indexer 的蒸馏损失为什么必须存在；运行时 1/4 与持久化 1/8 的口径差别；报告的体系结构视角：三种缓存状态、AGU/TLB、4×8×40 三个时钟域。</p></li>
+
+<li><div class="row"><span class="n">A</span><a href="a-cheatsheet.html">附录 A. 速查表与出处</a></div>
+<p class="note">一页公式表、全部数字的出处、术语中英对照、以及"哪里容易算错"的清单。</p></li>
+</ul>
+
+<h2>符号约定</h2>
+<div class="tablewrap"><table class="sym">
+<thead><tr><th>符号</th><th>含义</th><th>V4.1 Flash 的取值</th></tr></thead>
+<tbody>
+<tr><td>\(L\)</td><td>主干层数</td><td>40（20 Encoder + 20 Decoder）</td></tr>
+<tr><td>\(E,\ D\)</td><td>Encoder / Decoder 各自的层数</td><td>各 20</td></tr>
+<tr><td>\(d\)</td><td>主干隐维 hidden dim</td><td>5120</td></tr>
+<tr><td>\(d_c\)</td><td>KV 潜在向量维数（即 head_dim）</td><td>512</td></tr>
+<tr><td>\(H\)</td><td>Q 头数（KV 只有一个共享潜在）</td><td>64</td></tr>
+<tr><td>\(W\)</td><td>滑动窗口宽度</td><td>128</td></tr>
+<tr><td>\(K\)</td><td>稀疏检索选中的条目数 idx_topk</td><td>512</td></tr>
+<tr><td>\(m\)</td><td>序列压缩比</td><td>Encoder 2 / Decoder 1</td></tr>
+<tr><td>\(N\)</td><td>上下文长度（token）</td><td>最长约 1M</td></tr>
+<tr><td>\(S\)</td><td>每 token 的全局 KV 字节</td><td>890 B</td></tr>
+</tbody></table></div>
+<p class="note">下标从 1 开始（数学惯例），报告与代码里的层号从 0 开始。看到"第 20 层"时按上下文判断是 \(l=20\) 还是第 21 个块；本篇一律用报告的写法：层号 \(l\in\{1,\dots,40\}\)，第 20 层是 Encoder 的最后一层。</p>
+
+<footer>
+<p>为《DSv4.1 Flash 架构导读》编写 · 9 篇正文 + 1 篇附录 · 公式使用本地 KaTeX 渲染，可离线阅读。</p>
+<p>配套阅读：<a href="../math/index.html">inferserver 的数学基础</a>（第 7、9、10 节是这里的起点）、<a href="../gpu/index.html">GPU 编程基础</a>（第 2 节的 band 冲突与第 5 章的 roofline 对应这里的带宽瓶颈）。原文为 zartbot《DeepSeek-V4.1 Flash: 把 KV Cache 压缩推到极致》，数字来源见附录 A。</p>
+</footer>
+</article>
+</main>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

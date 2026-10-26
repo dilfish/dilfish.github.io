@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>3. 层维度（上）：CED 把 prefill 减半 · DSv4.1 架构导读</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='16' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EK%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="03-ced.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">DSv4.1 Flash 架构导读</a>
+</header>
+<main>
+<article>
+<h1>3. 层维度（上）：CED 把 prefill 减半</h1>
+
+<h2>3.1 为什么先动 prefill</h2>
+<p>barm 第 2 章把一次生成拆成 prefill 和 decode 两段，其中 prefill 是"把整段提示词过一次模型"。在两本书的场景里，提示词通常几百个 token，prefill 只占一次调用的零头。</p>
+<p>Agent 工作流改变了这个比例。一次工具调用返回几千 token，模型要重新读一遍（或部分重读）上下文；一轮任务可能调用几十次工具。于是<b>prefill 从零头变成主要开销</b>，而且它是纯计算：提示词没变、缓存命中不了的部分必须从头算。</p>
+<p>这里有一个简单但容易忽略的事实：prefill 的成本正比于"<b>token 数 × 层数</b>"。1.2 节的 KV 账是"层数 × token 数 × 条目字节"，prefill 的算力账是"层数 × token 数 × 每层 FLOP"。两者共享同一个乘数 <b>层数</b>。CED 就是在这个乘数上动手。</p>
+
+<h2>3.2 YoCo：让 KV 只被生产一次</h2>
+<p>CED 的直接来源是 YoCo（You Only Cache Once）。它的观察很朴素：标准 Transformer 里，第 \(l\) 层的 KV 由第 \(l\) 层的隐状态算出，所以 40 层就有 40 份不同的历史表示。可是这 40 份里有多少是真正独立的？</p>
+<p>YoCo 的答案：把模型竖着切成两半。<b>下半部分负责把历史压成一份表示，上半部分只负责读这份表示。</b></p>
+<pre class="fig">标准 Transformer
+L40  Q40 K40 V40
+L39  Q39 K39 V39
+...
+L1   Q1  K1  V1
+
+YoCo
+L40  Q40   读共享 KV
+L39  Q39   读共享 KV
+...
+L21  Q21   读共享 KV
+L20  K20 V20  产出共享 KV
+L19  K19 V19
+...
+L1   Q1  K1  V1</pre>
+<p>下半部分仍要算 KV（因为要读自己的历史），上半部分只算 Q。于是"层维度"上的 KV 份数从 \(L\) 降到 \(L/2+1\)，同时上半部分的层在 prefill 时可以<b>只看最后一个位置</b>——历史已经压进共享 KV 里了。</p>
+<div class="note"><p>这个想法在工业界有别的名字，比如 KV-Mirror。报告引用的公开实现之一是腾讯 WeLM 的工作。名字不同，机制是同一个：跨层共享一份全局 KV。</p></div>
+
+<h2>3.3 CED 的具体做法</h2>
+<p>CED（因果编码器-解码器，causal encoder-decoder）把 \(L=40\) 层切成 \(E=D=20\)：\(l\le 20\) 是 Encoder，\(l>20\) 是 Decoder。对 Decoder 的全局注意力，KV 不再由本层隐状态导出，而是<b>统一从第 20 层的隐状态投影</b>：</p>
+\[
+C_l=H_{20}\,W_l^{KV},
+\qquad
+Z_l=H_{20}\,W_l^{Z},
+\]
+\[
+l>20,
+\]
+<p>其中 \(H_{20}\in\mathbb{R}^{N\times d}\) 是第 20 层（Encoder 最后一层）输出的全部位置隐状态，\(W_l^{KV}\) 是第 \(l\) 层自己的投影权重（\(d\to d_c\)），\(C_l\) 就是第 \(l\) 层要用的主 KV，\(Z_l\) 是同一批隐状态投到 Indexer K 上的版本。</p>
+<p>和第 1 章的 MLA 对照一下，会发现这是同一个手法的另一面。MLA 把"每层的 K、V 由本层隐状态算出"改成"由一个低维潜在向量算出"；CED 把"每层的潜在向量由本层隐状态算出"改成"由第 20 层的隐状态算出"。<b>前者压的是每个条目的宽度，后者压的是条目的份数。</b></p>
+<p>为什么每层还要自己的 \(W_l^{KV}\)？如果所有 Decoder 层共用一个投影，那 20 层读的就是<b>完全相同</b>的键值，只有 Q 不同——那就是"20 层重复同一层"。给每层一个不同的投影，等于让每层把同一份记忆<b>重新解释</b>一遍：\(C_l\) 不同，凸包的顶点就不同，可达的输出分布也就不同（第 5.7 节会精确说明这一点）。</p>
+
+<h2>3.4 计算量：为什么正好是一半</h2>
+<p>设 Encoder 深度 \(E=L/2\)，Decoder 深度 \(D=L/2\)，窗口 \(W\)，序列长 \(N\)。</p>
+<p>Encoder 要处理全部 \(N\) 个位置，成本正比 \(NE\)。Decoder 只需要处理"最后 \(B=\min(N,W)\) 个位置"（原因见 3.5 节的 bounded replay），成本正比 \(BD\)。合计</p>
+\[
+C_{\text{CED}}\approx NE+BD .
+\]
+<p>没有 CED 时全部 \(N\) 个位置要走完 \(L\) 层，成本 \(NL\)。两者相比，代入 \(E=D=L/2\)：</p>
+\[
+\frac{C_{\text{CED}}}{C_{\text{full}}}
+\approx\frac{NL/2+BL/2}{NL}
+=\frac12+\frac{B}{2N}.
+\]
+<div class="key"><span class="tag">结论</span>
+<p>\(1/2\) 来自"层数减半"，\(B/2N\) 是 Decoder 为恢复局部状态付的税。序列越长，税越轻；\(N\gg W\) 时比例趋近 50%。</p>
+</div>
+<p>代入报告的配置 \(L=40,W=128\)，取一段 \(N=32768\) 的冷启动提示词：</p>
+<ul>
+<li>完整计算：\(32768\times40=1{,}310{,}720\) token·层。</li>
+<li>CED：\(32768\times20+128\times20=655{,}360+2{,}560=657{,}920\) token·层。</li>
+<li>比例：\(657{,}920/1{,}310{,}720=50.2\%\)。</li>
+</ul>
+<p>如果把 \(N\) 换成 \(10^6\)：\(0.5+128/(2\times10^6)=50.006\%\)。税几乎消失。这也对应报告里那句"prefill 每 token 激活 8B、decode 激活 16B"：prefill 只走 20 层，参数激活量正好是 decode 的一半。</p>
+
+<h2>3.5 Bounded replay：那个 \(B\) 从哪来</h2>
+<p>Decoder 里除了全局 KV，每层还有一份 SWA 局部 KV（最近 128 个位置）。问题来了：Encoder 只处理了"全部位置"，Decoder 只处理"最后 128 个"，那中间那些位置的<b>局部 KV 就没生成过</b>。要不要补？</p>
+<p>如果严格补，代价比想象的大。为了让位置 100 的<b>第 20 层</b>局部表示正确，需要位置 97–100 的<b>第 19 层</b>表示；而第 19 层的位置 97 又需要第 18 层的 94–97，依此类推。向前追溯的总跨度是</p>
+\[
+R\approx DW=20\times128=2560 .
+\]
+<p>也就是说，为了恢复"最后 128 个位置"的精确局部状态，实际要让 <b>2560</b> 个位置过一遍 20 层 Decoder。Agent 场景里每轮工具调用可能只新增几十个 token，这个恢复成本会把提前退出的收益吃掉。</p>
+<p>报告的做法叫 bounded replay（有界重放）：<b>只重放最后 \(W=128\) 个位置，不再向前追溯。</b>代价是重建出来的局部 KV 是近似的——重放片段的开头缺少更早的局部依赖。接受的依据来自对 SWA 感受野的实验观察：在一个约 2K 窗口的设定下，信息经过约 6 层传播后已经衰减得很弱，所以多回溯那 2400 多个位置换来的是可忽略的精度。</p>
+<div class="warn"><span class="tag">常见错误</span>
+<p>被截断的是<b>局部 SWA 状态的重建范围</b>，不是全局记忆。重放最后 128 个位置时，Decoder 仍可以按稀疏规则读更长的全局 KV。所以这个近似只影响"最近窗口内的深层局部表示"，不影响"这段提示词讲了什么"。</p>
+</div>
+
+<h2>3.6 一个反直觉的细节：SWA 反而增加了"深度"</h2>
+<p>CED 里全局 KV 只来自第 20 层，看起来"深度变浅了"。但 SWA 不是：<b>每一层都用自己的隐状态算局部 KV</b>，包括 20 层 Decoder。于是最近 128 个位置的表示，经过的是完整 40 层；而更早的位置经过的是 20 层。</p>
+<p>这不是缺陷而是设计：解码时新 token 就在窗口内，它需要最深的表示；远处的历史只需要"被压缩过的记忆"。于是同一份上下文里，<b>近处深、远处浅</b>——这正是"注意力该有的样子"。</p>
+
+<h2>3.7 容易算错的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li><b>把 CED 当成"40 层变 20 层"</b>。参数和层数都没变，变的是"哪些层参与 prefill 的逐位置计算"。</li>
+<li><b>用 \(B=0\) 算 50%</b>。\(B=\min(N,W)\)，小提示词下 \(B/2N\) 不可忽略：\(N=256\) 时比例是 \(0.5+128/512=75\%\)，CED 在这个量级上几乎不省。</li>
+<li><b>把 \(2560\) 当成"要重放的量"</b>。2560 是<b>精确恢复</b>需要的跨度；bounded replay 只重放 128，剩下的是被接受的近似。</li>
+<li><b>认为 Decoder 层不产生 KV</b>。它们仍产生局部 SWA KV，只是不再各自产生全局 KV。</li>
+</ul>
+</div>
+</article>
+</main>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

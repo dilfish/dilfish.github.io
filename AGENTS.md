@@ -17,9 +17,10 @@ index.html          站点首页（系列入口）
 404.html            404 页
 gpu/                《GPU 编程基础》系列（index.html + 章节 + series.js）
 math/               《inferserver 的数学基础》系列（index.html + 章节 + series.js）
+dsv4.1/             《DSv4.1 Flash 架构导读》系列（index.html + 章节 + series.js）
 assets/
   css/site.css      站点首页 / 404 的样式
-  css/math.css      两个系列的共享样式
+  css/math.css      各系列共享的排版样式
   css/gpu.css       GPU 系列在 math.css 之上的补充样式
   js/nav.js         系列页共享脚本：面包屑、上下章、KaTeX 渲染
   katex/            本地 KaTeX（katex.min.css/js、auto-render、fonts）
@@ -259,9 +260,9 @@ document.querySelectorAll('main *').forEach(el => {
 
 ## 改完自查
 
-- 断链：`grep -rn 'href="\.\./assets' gpu math` 只应出现 `../assets/css|js|katex|img` 下的真实文件。
+- 断链：`grep -rn 'href="\.\./assets' gpu math dsv4.1` 只应出现 `../assets/css|js|katex|img` 下的真实文件。
 - KaTeX 字体：`assets/katex/fonts/` 必须完整，否则公式回退成系统字体。
-- 页面能直接在 `file://` 下打开（不要引入绝对路径 `/assets/...`，`gpu/`、`math/` 内一律用相对路径）。
+- 页面能直接在 `file://` 下打开（不要引入绝对路径 `/assets/...`，`gpu/`、`math/`、`dsv4.1/` 内一律用相对路径）。
 - 插图放 `assets/img/`，用一个 `.fig`（`<figure>` + `<img>` + `<figcaption>`）包起来；图宽按
   360 CSS px 视口设计，单栏最宽约 324 px，三格横排在手机上必然糊，优先竖排或两格。
   能画成 SVG 就别用位图（同样的线条在微信 / 高 DPI 下不会糊），像素级效果才用 PNG。

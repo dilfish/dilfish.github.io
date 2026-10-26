@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>2. 序列维度：滑动窗口与稀疏检索 · DSv4.1 架构导读</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='16' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EK%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="02-sequence.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">DSv4.1 Flash 架构导读</a>
+</header>
+<main>
+<article>
+<h1>2. 序列维度：滑动窗口与稀疏检索</h1>
+
+<h2>2.1 全注意力在 1M 上下文下的两笔账</h2>
+<p>bllm 第 3 章和第 4 章里的注意力是<b>全注意力</b>：位置 \(t\) 对 \(1..t\) 全部位置算分数。<a href="../math/07-attention.html">数学基础第 7.6 节</a>算过每层约 \(4HT^2d\) FLOP。先把"如果 40 层都做全注意力"的账算出来，\(T=10^6\)、\(H=64,d=512\)：</p>
+\[
+4\times 64\times 512\times (10^6)^2
+=1.31\times 10^{17},
+\]
+<p>一层，单位是 FLOP。40 层就是 \(5.2\times10^{18}\)；按单卡 400 TFLOP/s 的有效算力，光这一项就是 3.6 小时。<b>这是 prefill 的账</b>。</p>
+<p>decode 的账不同：每生成一个 token，要读全部历史 KV。按 1.4 节的 1024 B/token/层、40 层：</p>
+\[
+1024\times 40\times 10^6=40.96\ \text{GB},
+\]
+<p>每生成<b>一个</b> token 都要把这个数从显存搬到计算单元。按 3 TB/s 带宽，0.0137 秒/token，也就是 73 token/s 的上限——模型算力再大也没用。<b>这是解码的账</b>：它不随参数变小，只随上下文长度线性增长。</p>
+<div class="key"><span class="tag">结论</span>
+<p>长上下文的第一瓶颈是"每步搬多少字节"，不是"算多少 FLOP"。报告压缩 KV 的目标不是省显存而是省带宽：890 B/token 意味着 1M 上下文一个 token 只搬 0.89 GB，比上面少 46 倍。</p>
+</div>
+
+<h2>2.2 滑动窗口：只用最近 128 个位置</h2>
+<p>SWA（滑动窗口注意力，sliding window attention）把位置 \(t\) 的可见集合从 \(\{1,\dots,t\}\) 换成</p>
+\[
+\mathcal W_t=\{\max(0,t-W+1),\dots,t\},
+\]
+\[
+W=128 .
+\]
+<p>每个位置只和之前 127 个位置算分数，于是每层的 KV 只需要保留最近 128 条：<b>是一个常数，不随 \(T\) 增长</b>。读的字节数从 \(O(T)\) 变成 \(O(W)\)。</p>
+<p>代价是感受野被截断。算一下它到底能看多远。设第 \(l\) 层输出的位置 \(t\) 依赖第 \(l-1\) 层的一个区间 \(I_{l-1}(t)\)，而第 \(l-1\) 层每个位置又依赖它自己前 \(W-1\) 个位置，于是区间每次向前扩 \(W-1\)：</p>
+\[
+\begin{aligned}
+|I_l(t)|&=|I_{l-1}(t)|+(W-1),\\
+|I_0(t)|&=1
+\end{aligned}
+\]
+\[
+\Longrightarrow\ R_D=1+D\,(W-1).
+\]
+<p>代入 \(D=20,W=128\)：\(R_{20}=1+20\times127=2541\)。报告的估算式是 \(R\approx DW=2560\)，差别 19 个位置，可以忽略——但推导过程要记住，因为第 3 章的 bounded replay 用的就是这条式子。</p>
+<p>两层的时候是 \(1+2\times127=255\)。这个数字在第 4 章会再出现一次：CED 在 Encoder 最前面放两层 SWA，就是为了让第三层开始做压缩时，输入已经带着 255 个位置的局部上下文。</p>
+
+<h2>2.3 稀疏检索：给全部历史打分，只读最好的 512 条</h2>
+<p>滑动窗口的问题是它只能看局部。稀疏注意力换一条路：仍然保留全部历史的条目，但用<b>一个小得多的注意力</b>给它们打分，只把分数最高的 \(K=512\) 条交给主注意力。这个打分的模块叫 Indexer。</p>
+<p>Indexer 自己有一套 Q/K，维度和主注意力不同：32 个头、每头 128 维（主注意力是 64 头 × 512 维）。对查询位置 \(t\) 与历史位置 \(j\)：</p>
+\[
+s_{t,j}=\sum_{h=1}^{32}\gamma_{t,h}\,
+\operatorname{ReLU}\!\big(\langle q^{I}_{t,h},\,k^{I}_{j}\rangle\big),
+\]
+\[
+S_t=\operatorname{TopK}_{j}\,s_{t,j},
+\qquad |S_t|=512 .
+\]
+<p>三个细节值得停一下：</p>
+<ul>
+<li><b>不需要 softmax</b>。主注意力要的是归一化的权重，Indexer 要的是<b>排序</b>。排序对单调变换不变，所以省掉 exp 和归一化，只要分量之间的相对大小对。</li>
+<li><b>ReLU 而不是 exp</b>。负分数直接归零，等于"这一头认为不相关"。多头求和后仍是非负的，且 ReLU 比 exp 便宜、不会溢出。</li>
+<li><b>\(\gamma_{t,h}\) 随查询变</b>。32 个头的重要程度由当前位置的隐状态决定，是一个逐 token 的加权，而不是固定权重。</li>
+</ul>
+<p>算一下 Indexer 自己的成本：每个查询要对 \(N\) 个位置各做 32 次 128 维点积，</p>
+\[
+N\times 32\times 128=10^6\times 4096=4.1\times10^{9}
+\]
+<p>次乘加——比主注意力便宜三个数量级（主注意力是 \(64\times512\) 维），但它仍是 \(O(N)\)，也就是说<b>稀疏检索并没有解决"每步扫全部历史"的问题，只是把每次扫描变便宜了</b>。第 4.6 节的 HSI 才是针对这一点的。</p>
+
+<h2>2.4 为什么两个都要："看得远"和"看得准"是两件事</h2>
+<p>把两者放在一起，位置 \(t\) 的可见集合是</p>
+\[
+A_t=\underbrace{\{c_j: j\in S_t\}}_{\text{全局 512 条}}
+\;\cup\;
+\underbrace{\mathrm{KV}^{\text{swa}}_t}_{\text{局部 128 条}},
+\]
+\[
+|A_t|\le 640 .
+\]
+<p>它们在梯度上互补：SWA 是精确的（没有选错的风险），但只有 2541 个位置的视野；稀疏检索覆盖全部历史，但选错就是永久损失——第 5.7 节会证明，一旦某个条目没进 \(S_t\)，之后任何层的任何查询扰动都够不到它。所以局部窗口保精度，稀疏检索保召回。</p>
+<p>这也解释了两个看起来奇怪的设计：为什么窗口只有 128（而不是 2048）——因为远处的信息由稀疏检索负责；为什么稀疏的 \(K=512\) 也不算大——因为最近 128 个位置已经由窗口精确覆盖，稀疏部分只需要补"远处的关键条目"。</p>
+
+<h2>2.5 每步读多少字节：一个与上下文无关的常数</h2>
+<p>decode 一个 token、在一个全局 KV 来源层上，主注意力要读：</p>
+<ul>
+<li>选中的 512 条主 KV：\(512\times288\ \text{B}=147{,}456\ \text{B}\approx144\ \text{KiB}\)（288 B 的来历见 4.4 节）。</li>
+<li>同样的 512 条 Indexer K：\(512\times68\ \text{B}=34{,}816\ \text{B}\approx34\ \text{KiB}\)。</li>
+<li>本地窗口 128 条：这是每层各自的 FP8 缓存，与上下文无关。</li>
+</ul>
+<p>合计每个来源层每 token 约 178 KiB，<b>与上下文长度无关</b>。对比 2.1 节的 40.96 GB，这就是"从 \(O(N)\) 到 \(O(1)\)"的实际含义：1M 上下文和 32K 上下文，decode 的读取量一样。</p>
+<div class="warn"><span class="tag">常见错误</span>
+<p>"\(O(1)\)"指的是<b>读取量</b>，不是总成本。Indexer 打分仍是 \(O(N)\)，prefill 仍要过一遍全部位置。真正的常数化发生在两个地方：读取（本节）和索引打分（第 4.6 节 HSI）。</p>
+</div>
+
+<h2>2.6 和两本书的对应</h2>
+<p>这一章没有一个新的数学工具：窗口就是一个<b>带状因果掩码</b>，稀疏就是<b>在 softmax 之前把一部分分数设成 \(-\infty\)</b>——正是 bllm 3.5 节因果掩码的推广。区别只在掩码的形状：因果掩码是上三角，窗口是上三角里的一条带，稀疏是"按打分结果动态生成的任意形状"。</p>
+<pre class="fig">因果       窗口(128)      稀疏(512/全历史)
+1 0 0 0    1 0 0 0        1 0 1 0
+1 1 0 0    1 1 0 0        0 1 0 1
+1 1 1 0    1 1 1 0        1 1 0 0
+1 1 1 1    0 1 1 1        0 1 1 1</pre>
+<p>三者可以叠加：V4.1 Flash 的每一层同时有窗口和稀疏两块，拼成上面 2.4 节的 \(A_t\)。</p>
+
+<h2>2.7 容易算错的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li><b>把窗口当感受野</b>。\(W=128\) 是一层的可见宽度，不是"模型只能看 128 个 token"；\(D\) 层叠起来是 \(1+D(W-1)\)。</li>
+<li><b>用 \(DW\) 算精确值</b>。\(DW=2560\) 是上界估算，精确式是 2541；差别小，但第 3 章用它做开销分析时要一致。</li>
+<li><b>以为 Indexer 用了 softmax</b>。它输出的是可比较的分数，不是概率；用 softmax 会把"整体偏移"抹掉，反而不利于 Top-K。</li>
+<li><b>把 640 当成"每层都读 640 条"</b>。640 是<b>一个来源层</b>的读数量；40 层里只有 4 层是来源层（第 4 章）。</li>
+</ul>
+</div>
+</article>
+</main>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

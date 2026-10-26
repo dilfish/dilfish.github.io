@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>8. 训练与部署：三个阶段、两个口径、三个时钟域 · DSv4.1 架构导读</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='16' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EK%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="08-train-deploy.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">DSv4.1 Flash 架构导读</a>
+</header>
+<main>
+<article>
+<h1>8. 训练与部署：三个阶段、两个口径、三个时钟域</h1>
+
+<h2>8.1 三个阶段，不是一个</h2>
+<p>前七章把结构拆完了，但结构里有两处是<b>不能从零训练出来的</b>：FP4 的缓存和 HSI 的候选池。它们的引入时机本身就是设计的一部分。</p>
+<ol class="steps">
+<li><b>预训练</b>：从头就用稀疏注意力，先以 64K 序列训练，再扩到 1M。此时<b>没有 HSI</b>——Reindex 层在全历史里选 Top-K，没有候选池限制。主 KV 也还是高精度。</li>
+<li><b>DSpark 的专门阶段</b>：预训练之后单独训草稿模型，主干冻结。理由是草稿模型要匹配"当前策略"的分布，和主干一起从头训会互相拖。</li>
+<li><b>后训练</b>：同时引入三样东西——HSI（候选池限制）、FP4 的主 KV（QAT）、以及继续训练 DSpark（梯度不回传主干）。</li>
+</ol>
+<div class="key"><span class="tag">判断方法</span>
+<p>为什么 HSI 和 FP4 都放后训练？因为它们都是<b>改变推理时的数值/搜索域</b>的操作。训练时若用"完整历史 + 高精度"，上线时换成"候选池 + FP4"，模型面对的就是一个它没见过的输入分布。放在后训练、且训练与推理施加完全相同的限制，才叫"训练感知"（training-aware）。</p>
+</div>
+
+<h2>8.2 Indexer 学什么：一条蒸馏路径</h2>
+<p>第 5 章的结论里有一条是硬的：Top-K 是离散的，几乎处处零梯度。所以<b>主任务的梯度到不了 Indexer</b>——它必须有一条自己的监督信号。报告披露了"存在这条路径"和"用主注意力当教师"这个方向，但没有给出损失的具体形式。下面按 DSA（上一代稀疏注意力）的公开做法写成最可能的样子，并标明这是推测。</p>
+<p>把主注意力的权重归一化成一个分布，把 Indexer 的打分过 softmax 得到另一个分布，让后者去拟合前者：</p>
+\[
+\mathcal L=\mathcal L_{\text{task}}(\theta)
++\lambda_I\sum_{\ell\in\mathcal I}\frac{1}{|\mathcal Q_\ell|}
+\sum_{t\in\mathcal Q_\ell}
+\]
+\[
+D_{\mathrm{KL}}\!\Big(\operatorname{sg}\big[\mathbf p^{(\ell)}_{t,\mathcal U}\big]
+\,\Big\|\,\mathbf q^{I,(\ell)}_{t,\mathcal U}\Big),
+\]
+<p>其中 \(\operatorname{sg}[\cdot]\) 是停止梯度：教师（主注意力）被固定，只有学生（Indexer）被推着走。\(\mathcal U\) 是明确指定的监督支持集，\(\mathcal Q_\ell\) 是该层有有效监督的查询集合，\(\lambda_I\) 是辅助系数，\(\mathcal I\) 是要监督的那几层（对应 8 个索引来源层）。</p>
+<p>这条式子解释了三个设计：</p>
+<ul>
+<li><b>为什么按层分组、按查询平均</b>：每层的 Indexer 是独立参数，不同层的候选分布不同，不能混在一起算；按查询平均是为了让长序列不主导梯度。</li>
+<li><b>为什么不直接用 Top-K 的重合率当损失</b>：Top-K 不可微，重合率是离散计数；KL 拟合的是<b>连续分数</b>，梯度能回传。</li>
+<li><b>为什么 \(\lambda_I\) 必须小</b>：Indexer 只是"选谁"的代理，选得再准也不能替代主任务；这一项是辅助目标，不是主目标。</li>
+</ul>
+<div class="note"><p>报告没有公开 \(\lambda_I\) 的取值、\(\mathcal U\) 的构造方式，也没有说这条损失是否同时作用在 Full 层与 Reindex 层上。上面这条式子是<b>按 DSA 的实现推的</b>，读报告时不要把系数当成已知量。</p></div>
+
+<h2>8.3 FP4 的 QAT：为什么必须训练</h2>
+<p>第 4.5 节证明了 MXFP4 的动态范围够（上界 2688，实测最大约 10），但"够用"不等于"白送"。把一个 512 维向量截断到 4 bit 会引入量化误差，而注意力对键值的相对大小敏感。所以需要一个量化感知训练（QAT）阶段：<b>前向用"假装量化过"的值，反向按直通估计器（STE）把梯度原样传回去</b>，让模型学会把信息放到量化后仍能分辨的位置上。</p>
+<p>报告给的两个工程细节：</p>
+<ul>
+<li><b>在 RoPE 之后量化</b>。RoPE 之前量化精度略好，但解码时得先把缓存反量化、再做旋转，多一次读写；报告选了"旋转后量化"，因为解码是带宽受限的（第 2.1 节），省带宽比省那点精度重要。</li>
+<li><b>滑动窗口的 KV 保持 FP8</b>。128 条本地窗口是精确的局部信息，且总量是常数（不随上下文增长），没必要冒这个险；它也是 Reuse 层唯一"新鲜生成"的顶点（第 5.7 节），精度更关键。</li>
+</ul>
+
+<h2>8.4 部署：两个口径</h2>
+<p>报告给了两个不同的省钱倍数，很多人读的时候会混：<b>运行时约 1/4、持久化约 1/8</b>（都以 V4-Flash 为分母）。</p>
+<ul>
+<li><b>运行时</b>：HBM 里常驻的全局 KV，按第 4.4 节的 890 B/token 算。1M 上下文约 0.89 GB。</li>
+<li><b>持久化</b>：为了前缀复用而写到主机内存／SSD 的那份。它只保留"跨请求可复用"的全局 KV。</li>
+</ul>
+<p>差的那一倍来自口径而不是魔法：两个分母统计的东西不一样——运行时那份还包含每层固定大小的本地窗口与推理期的临时缓冲，持久化只存全局 KV。报告没有给出逐项拆分，这里就不替它编一个。</p>
+<p>三个和"存得下"直接相关的工程点：</p>
+<ul>
+<li><b>分层</b>：HBM → 主机内存 → SSD，按访问频率排；长期不用的前缀直接沉到 SSD，命中时再搬回来。</li>
+<li><b>确定性寻址让预取可行</b>：Engram 的 n-gram 行号由 token 元组唯一确定（第 6.4 节），所以可以在第一个 Transformer 块计算的同时，用后台 RDMA 把嵌入从主机内存拉过来——传输与计算重叠，不占关键路径。</li>
+<li><b>压缩的直接经济意义</b>：890 B/token 意味着 1M 上下文的持久化副本不到 1 GB，一份 8 卡的机器能同时驻留的前缀数量从"几十个"变成"几百个"——这是吞吐的来源，不是显存的来源。</li>
+</ul>
+
+<h2>8.5 报告 3.2 的视角：三种模式就是三种缓存状态</h2>
+<p>把那层 CSA2 当成一台小计算机来读，三个部件各归其位：</p>
+<pre class="fig">执行单元   新算的 Q 与本地 KV
+片上缓存   主 KV / Indexer K / Top-K
+大容量后端 MoE 与 FFN</pre>
+<p>关键对应是"什么是可缓存状态"：<b>Q 与本地 KV 永远是新鲜操作数</b>（像每条指令新取的寄存器值），不进共享缓存；<b>主 KV、Indexer K、Top-K 索引</b>是可缓存状态，是否重算取决于命中与否。于是三种模式的读写模式就是一张缓存访问表：</p>
+<pre class="fig">模式      主 KV   Indexer K   Top-K
+Full      写      写          算
+Reindex   读      读          重算
+Reuse     读      不访问      读</pre>
+<ul>
+<li><b>Full = 写回填充</b>（write-allocate）：执行单元算出全部可缓存状态并写入，代价最高。</li>
+<li><b>Reindex = 数据命中、地址重算</b>：缓存行常驻，只重跑一次"地址翻译"。</li>
+<li><b>Reuse = 全命中</b>：数据与地址都在，执行单元只用新操作数做一次读出，最接近纯 load。</li>
+</ul>
+<p>Indexer 在这套语言里是<b>地址生成单元 + TLB</b>：它不搬数据，只产出"读哪些条目"的地址集合。Full 层让地址单元全速跑一遍；Reindex 只在受限范围内重新翻译；Reuse 直接把上次的地址向量拿来用——等于对最贵的地址计算做了一次公共子表达式消除。</p>
+<p>HSI 的候选池则是一张<b>工作集约束</b>：第 20 层选出 2048 块共 16384 个位置，等于为后续层立了一张"只能在页内寻址"的页表。两级 Top-K（先块后位置）就是两级页表：先用块级最大分选页，再在页内选具体条目。这也解释了为什么"池外位置根本不可寻址"——不是"分数低"，是<b>地址空间里没有它</b>。</p>
+
+<h2>8.6 三个时钟域</h2>
+<p>三种可刷新状态的刷新频率恰好差一个数量级，报告用"三个时间尺度"来描述，其实和 CPU 的三级存储是同构的：</p>
+\[
+\underbrace{\text{Content } C}_{\text{刷新 }4\text{ 次}}
+\ \supset\
+\underbrace{\text{Address } S}_{\text{刷新 }8\text{ 次}}
+\]
+\[
+\supset\
+\underbrace{\text{Query } q}_{\text{刷新 }40\text{ 次}} .
+\]
+<ul>
+<li><b>内容 \(C\)：4 次</b>。只有 4 个来源层（\(l=2,8,14,20\)）重建主 KV 与 Indexer K（第 4.3 节）。最慢、最贵——它要扫全部可见历史。</li>
+<li><b>地址 \(S\)：8 次</b>。8 个索引来源层（\(2,8,14,20,24,28,32,36\)）重新选 Top-K。中等——它在候选池里打分。</li>
+<li><b>查询 \(q\)：40 次</b>。每一层都算自己的 Q。最快、最便宜——只是当前隐状态的本层投影。</li>
+</ul>
+<p>越靠近执行单元的状态，刷新越快、越便宜；越靠近共享后端的状态，刷新越慢、越贵。CSA2 的模式调度说白了就是<b>把每类状态放到与它重算成本匹配的刷新率上</b>：如果每层都刷内容（40 次），成本爆炸；如果 40 层都复用同一份地址（1 次），召回就退化成"全模型一次检索"，第 5.6 节的三个缺口会同时出现。</p>
+<div class="key"><span class="tag">结论</span>
+<p>整篇报告的结构可以压成一行：<b>4 份内容 × 8 份地址 × 40 份查询</b>。看到任何"为什么这层是 Reuse 那层是 Reindex"的问题，先数它属于哪个时钟域。</p>
+</div>
+
+<h2>8.7 容易算错的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li><b>用 1/8 去算显存</b>。1/8 是持久化口径；显存里常驻的是运行时那份，约 1/4（890 B/token）。</li>
+<li><b>以为 HSI 在预训练里就有</b>。预训练是全历史选择；候选池是后训练才加的，训推同构是它的前提。</li>
+<li><b>把"4 次内容刷新"读成"只有 4 层有 KV"</b>。是所有层都读，只有 4 层写；Reuse 层读的正是这 4 份。</li>
+<li><b>把 Indexer 的损失当成已知</b>。报告只说了方向（主注意力当教师），系数与支持集的构造都没公开；8.2 节的式子是推测。</li>
+<li><b>把 FP4 当成推理期的矩阵乘格式</b>。它只用于存储，计算前反量化（第 4.5 节）。</li>
+</ul>
+</div>
+</article>
+</main>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

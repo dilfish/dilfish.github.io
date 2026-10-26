@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>1. 条目大小：一条 KV 到底占多少字节 · DSv4.1 架构导读</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='16' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EK%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="01-entry.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">DSv4.1 Flash 架构导读</a>
+</header>
+<main>
+<article>
+<h1>1. 条目大小：一条 KV 到底占多少字节</h1>
+
+<h2>1.1 起点：barm 2.8 存了什么</h2>
+<p>barm 2.8 解释 KV cache 时给的是最朴素的版本：为了不重算历史，把每一层、每个历史位置的 \(k\) 和 \(v\) 都留下来，于是生成第一个 token 要算 \(T\) 次方，之后每步只算一次新的 \(q\) 和全部历史的点积。那里没有说明的是<b>这份缓存有多大</b>。</p>
+<p>把 barm 的写法补上单位。第 \(l\) 层的第 \(t\) 个位置存两个向量 \(k_t^{(l)},v_t^{(l)}\)，每个 \(H_{kv}\) 个头、每头 \(d_h\) 维，每个数 \(s\) 字节：</p>
+\[
+\text{bytes/token/layer}=2\,H_{kv}\,d_h\,s .
+\]
+<p>系数 2 是 K 和 V 各一份。这就是<a href="../math/09-gqa.html">数学基础第 9 节</a>和<a href="../math/10-kv-cache.html">第 10 节</a>里那条公式的出处；那里用 Qwen3-0.6B 的 \(H_{kv}=8\)、\(d_h=128\)、fp32 算出 224 KiB/token，这一节不再重复，只把同样的式子代进 V4.1 Flash 的量级。</p>
+
+<h2>1.2 先看最贵的那种：64 个 KV 头各存各的</h2>
+<p>V4.1 Flash 有 64 个 Q 头，每个 512 维。假设它用最朴素的 MHA——64 个 KV 头也各存 512 维的 K 和 V，fp16 两字节：</p>
+\[
+2\times 64\times 512\times 2 = 131{,}072\ \text{B}.
+\]
+<p>这是<b>一层</b>、<b>一个 token</b>。40 层：</p>
+\[
+131{,}072\times 40=5{,}242{,}880\ \text{B}\approx 5\ \text{MiB}.
+\]
+<p>一个 1M 上下文的会话，光 KV 就要 5.24 TB。这个数字说明了报告为什么不是"优化一下"而是"重新设计"：MHA 在长上下文下不是慢，是物理上放不下。</p>
+<div class="key"><span class="tag">判断方法</span>
+<p>看到任何"KV 省了 N 倍"的说法，先问它在算哪一个量：每 token 字节、每会话总量、还是持久化到 SSD 的总量。三者相差一个"上下文长度"因子，可以差三个数量级。</p>
+</div>
+
+<h2>1.3 第一步：GQA 只共享"被查询的内容"</h2>
+<p>GQA 让多个 Q 头看同一组 K/V。<a href="../math/09-gqa.html">数学基础第 9 节</a>已经推过映射 \(g(h)=\lfloor h/G\rfloor\) 和它省的是内存而不是注意力 FLOPs，这里只用它的结论：<b>KV 头数从 64 降到 \(H_{kv}\)，字节数按 \(H_{kv}/64\) 线性下降</b>。</p>
+<ul>
+<li>每 8 个 Q 头共享一组（\(H_{kv}=8\)）：\(2\times8\times512\times2=16{,}384\) B。</li>
+<li>全部共享一组（\(H_{kv}=1\)，即 MQA）：\(2\times 1\times 512\times 2=2{,}048\) B。</li>
+</ul>
+<p>GQA/MQA 的代价在 9.1 节已经说过：同一组里的 Q 头虽然权重不同，但只能看到同一份键值内容。压缩到 1 组时，64 个头挤在一个 512 维的键空间里，表达力开始下降。这就逼出了下一步——能不能既只存一份，又不让所有头挤在同一个空间里？</p>
+
+<h2>1.4 MLA：把 K 和 V 都变成同一个潜在向量的线性函数</h2>
+<p>MLA（多头潜在注意力，multi-head latent attention）的想法是：K 和 V 不必各自独立地从隐状态算出来，它们可以是<b>同一个低维向量</b>的两个上投影。设</p>
+\[
+c_t=W_D x_t\ \in\mathbb{R}^{d_c},
+\]
+\[
+k_t^{(h)}=W_K^{(h)}c_t,
+\qquad
+v_t^{(h)}=W_V^{(h)}c_t ,
+\]
+<p>其中 \(x_t\in\mathbb{R}^{d}\) 是该层输入，\(W_D\in\mathbb{R}^{d_c\times d}\) 是所有头共用的降维矩阵，\(W_K^{(h)},W_V^{(h)}\in\mathbb{R}^{d_h\times d_c}\) 是每个头上投影。缓存里只放 \(c_t\)，一个 512 维向量。<b>这是唯一被存下来的东西。</b></p>
+<p>现在关键的一步：既然只存 \(c_t\)，那历史位置的 \(k_t,v_t\) 每次都要现算吗？不需要。代进分数：</p>
+\[
+s_{t,j}^{(h)}=\big\langle q_t^{(h)},\,k_j^{(h)}\big\rangle
+=\big\langle q_t^{(h)},\,W_K^{(h)}c_j\big\rangle
+\]
+\[
+=\big\langle \underbrace{W_K^{(h)\top}q_t^{(h)}}_{=\,\tilde q_t^{(h)}},\,c_j\big\rangle .
+\]
+<p>\(\tilde q_t^{(h)}\) 可以在算 \(q\) 的时候顺手算好，是一次的矩阵乘，与历史长度无关。所以<b>历史侧永远只出现 \(c_j\)</b>，\(W_K^{(h)}\) 被"吸收"进了查询。同理看输出：</p>
+\[
+o_t^{(h)}=\sum_{j}p_{t,j}\,v_j^{(h)}
+=\sum_j p_{t,j}\,W_V^{(h)}c_j
+\]
+\[
+=W_V^{(h)}\Big(\sum_j p_{t,j}\,c_j\Big).
+\]
+<p>这里用的是矩阵乘对线性组合的分配律：求和与 \(W_V\) 可以交换顺序。于是整条注意力通路变成"<b>用 \(\tilde q\) 对 \(c_j\) 加权求和，最后乘一次 \(W_V^{(h)}\)</b>"。历史侧只需要 \(c_j\)，一份 512 维，供给 64 个头共 64 次读取。</p>
+<div class="note"><p>严格说，"不损失表达力"要限定一下：MLA 是<b>把模型限制在"K、V 是同一个 512 维向量的线性函数"这个族里</b>，然后在这个族内不做任何妥协。相对 MHA 它是一个结构假设（降秩），不是一个近似；训练时模型已经学会在这个假设下工作。这也是为什么报告可以同时说"参数更多"和"KV 更小"——多出来的参数去补表达力，省下来的字节来自结构。</p></div>
+
+<h2>1.5 为什么 512 维就够了：一个秩的论证</h2>
+<p>直觉上 64 个头各要 512 维的键，合计 32,768 个数字，凭什么压成 512 个？因为<b>注意力从来不用 \(k\) 本身，只用它与 \(q\) 的内积</b>。固定一个位置 \(j\)，把所有 64 个头对任意查询的分数并起来看：</p>
+\[
+q\ \longmapsto\
+\Big(\big\langle q^{(h)},\,W_K^{(h)}c_j\big\rangle\Big)_{h=1}^{64}.
+\]
+<p>右端每一个分量都只通过 \(c_j\) 依赖位置 \(j\)，而 \(c_j\) 是 512 维的。也就是说这张"64 维分数表"由 512 个数完全决定：<b>映射的秩不超过 512，而输入空间是 64 个头的查询拼起来。</b>存 512 个数和存 32,768 个数，在这条通路上给出的分数集合是一样的。</p>
+<div class="warn"><span class="tag">常见错误</span>
+<p>把上面这段读成"任何 MHA 都能无损压到 512 维"。不能。结论成立的<b>前提</b>是 K 本来就写成 \(W_K c_j\) 这个分解形式。普通 MHA 的 K 是任意矩阵乘出来的，不存在这样一个公共的 512 维 \(c_j\)；硬要压就是有损的 PCA 式近似，而不是恒等重写。</p>
+</div>
+
+<h2>1.6 V4.1 Flash 的具体取值</h2>
+<p>报告里这一块的配置：</p>
+<ul>
+<li>\(H=64\) 个 Q 头，<code>head_dim</code> \(=d_c=512\)：这个 512 就是潜在维，不是"每头维度乘头数后再切分"。</li>
+<li>512 维里 <b>64 维用于 RoPE</b>，其余 <b>448 维 NoPE</b>。原因是位置旋转依赖绝对位置 \(t\)，旋转矩阵没法吸收进查询（吸收后 \(\tilde q\) 会随位置变，反而更贵），所以这 64 维在每层单独按位置旋转，其余 448 维走上面那套吸收。</li>
+<li>Q 侧本身也是低秩的：<code>q_lora_rank</code> \(=1280\)，即先用 \(d\to1280\to 64\times512\) 的两步投影。输出投影分 8 组，每组秩 1024。</li>
+</ul>
+<p>于是每 token、每层的条目大小（fp16）是：</p>
+\[
+\underbrace{512}_{d_c}\times\underbrace{2}_{\text{fp16}}=\boxed{1024\ \text{B}} .
+\]
+<p>对比 1.2 节的 MHA：131,072 / 1024 = <b>128 倍</b>。对比 MQA：2048 / 1024 = 2 倍——多的那 2 倍正是"K 和 V 分开存"与"K = V = 同一个 \(c_j\)"的区别。</p>
+
+<h2>1.7 但 40 层仍是 40 份</h2>
+<p>别忘了 1.2 节那个乘数。1024 B × 40 层 = 40,960 B/token；1M 上下文就是 40.96 GB。这仍然不可接受。所以"条目大小"这一维压完了，还剩两维：</p>
+<ul>
+<li><b>多少条</b>：不是每个位置都要一条（压缩比 \(m\)），也不是每条都要读（窗口 + Top-K）→ 第 2 章、第 4.2 节。</li>
+<li><b>几层各存一份</b>：不必要 40 份，可以只有 4 份，其余层复用 → 第 3 章、第 4.3 节。</li>
+</ul>
+<p>三样都动完，才得到 890 B/token（第 4.4 节的账）。其中"条目大小"这一维的贡献是 584 B → 288 B，也就是 FP4 那一步。</p>
+
+<h2>1.8 容易算错的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li><b>把 \(d_c=512\) 当成 \(H\cdot d_h\)</b>。512 是<b>一个</b>潜在向量的长度，64 个头都读它；写成 \(64\times512=32768\) 就退回到 MHA 了。</li>
+<li><b>忘了 RoPE 的 64 维也在 512 里</b>。它不是额外加的 64 维，而是 512 中切出来的一段；所以条目还是 512 个数，不是 576。</li>
+<li><b>用 fp16 算完就当成报告的 890 B</b>。890 B 是 FP4 载荷 + 缩放因子，见 4.4；这里 1024 B 只是这条压缩链上的第三级。</li>
+<li><b>把"吸收"理解成"把 \(W_K\) 删了"</b>。矩阵还在，只是乘在 \(q\) 上、以头为单位、每个新 token 只乘一次，不进历史。</li>
+</ul>
+</div>
+</article>
+</main>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

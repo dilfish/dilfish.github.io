@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>0. 你手里的两本书，够用在哪、缺在哪 · DSv4.1 架构导读</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='16' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EK%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="00-map.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">DSv4.1 Flash 架构导读</a>
+</header>
+<main>
+<article>
+<h1>0. 你手里的两本书，够用在哪、缺在哪</h1>
+
+<h2>0.1 先把两本书压成一页</h2>
+<p>《Build a Large Language Model (From Scratch)》（下称 bllm）教你造一个 GPT：分词、注意力、Transformer 块、预训练、微调。《Build a Reasoning Model (From Scratch)》（下称 barm）接着教你把它变成会推理的模型：文本生成与 KV cache、用验证器打分、推理期扩展、GRPO 强化学习、蒸馏。</p>
+<p>把它们摊开看，<b>真正被 DeepSeek-V4.1 Flash 用到的只有前一半</b>：一层标准因果自注意力，加上它的 KV cache。剩下的一切——MLA、滑动窗口、稀疏索引、跨层复用、FP4——都是在"这一层的 KV 太占地方"这个问题上做的工程。</p>
+<ul>
+<li><b>bllm 第 3 章</b>：Q、K、V，\(\langle q,k\rangle/\sqrt d\)，因果掩码，多头。→ 报告里每一个注意力仍然长这样，只是"读哪些条目"被截断了。</li>
+<li><b>bllm 第 4 章</b>：LayerNorm、GELU、残差、Transformer 块。→ 报告里的 MoE 层与 mHC 残差是这两样的替换品。</li>
+<li><b>barm 2.8</b>：KV cache 让 decode 从 \(O(T^2)\) 变成每步 \(O(T)\)，代价是"每层每个历史位置各存一份 K 和 V"。→ <b>这一句就是整篇报告的动机</b>。</li>
+<li><b>barm 第 4 章</b>：温度、top-p、自一致性。→ 与 DSpark 的投机解码共享同一套"从一个分布里取一个 token"的语言。</li>
+<li><b>barm 第 6、7 章</b>：GRPO、裁剪、KL。→ 报告里 Indexer 的辅助损失只在结构上像它；本篇不展开后训练。</li>
+</ul>
+<div class="key"><span class="tag">判断方法</span>
+<p>报告里任何一个模块，先问：它是在改<b>注意力读什么</b>（Q/K/V/选择集），还是在改<b>注意力读哪里</b>（KV cache 的存放与复用），还是在改<b>注意力之外的部分</b>（MoE、残差、草稿模型）。三者对应三套不同的数学，混在一起看就会觉得报告难读。</p>
+</div>
+
+<h2>0.2 缺的那一段：五个新词</h2>
+<p>报告里出现频率最高、而两本书里没有的，只有五个词。每个词的"最小可用定义"如下，后面各章会逐个展开。</p>
+<ul>
+<li><b>MLA（多头潜在注意力）</b>：不存 K 和 V，只存一个低维向量 \(c_t\in\mathbb{R}^{512}\)，K 和 V 由它乘上矩阵得到。省的是"条目大小"。</li>
+<li><b>SWA（滑动窗口注意力）</b>：位置 \(t\) 只看 \([t-127,t]\) 这 128 个位置。省的是"读多少条"。</li>
+<li><b>稀疏检索（Indexer + Top-K）</b>：用一个便宜的小注意力给全部历史位置打分，只读分数最高的 512 条。省的也是"读多少条"，但保留全局视野。</li>
+<li><b>CED（因果编码器-解码器）</b>：前 20 层当编码器，把第 20 层的隐状态投影成全局 KV；后 20 层不再各自生成 KV。省的是"几层各存一份"，同时把 prefill 算力砍半。</li>
+<li><b>CSA2</b>：上面几条的合成体。三种模式 Full / Reindex / Reuse 决定每一层刷新"内容、地址、查询"里的哪几样。</li>
+</ul>
+<p>另外还有四个"不是新概念、但量级变了"的东西：MoE（384 个专家选 6 个）、FP4 量化（每通道从 1 字节压到 0.5 字节）、Engram（n-gram 哈希查表，196B 参数的"条件记忆"）、DSpark（3 层草稿模型投机解码）。它们都在第 6 章。</p>
+
+<h2>0.3 先给你一个量级</h2>
+<p>同一份 1M 上下文，不同架构的 KV 账单差多少？先只算"每 token 字节"这一项，其余不动。</p>
+<pre class="fig">64 个 KV 头的 MHA, fp16    131072 B
+GQA 每 8 个 Q 头共享一组, fp16  16384 B
+MQA 共 1 组, fp16             2048 B
+MLA 一个 512 维潜在, fp16     1024 B
+MLA + FP4 (V4.1 Flash)         288 B</pre>
+<p>最左到最右差了 <b>455 倍</b>，而这只是"条目大小"一个维度。<a href="01-entry.html">第 1 章</a>会把每一行算给你看：数字不是估的，是 \(2\cdot H_{kv}\cdot d_c\cdot\text{bytes}\) 这类式子代进去的结果。</p>
+<p>但注意：MLA 的 1024 B 是<b>每层每 token</b>。40 层就是 40 份，一共 40 KB/token——1M 上下文仍是 40 GB。所以还要动"几层各存一份"，那是第 3、4 章。三条一起动，才落到 890 B/token。</p>
+<div class="warn"><span class="tag">常见错误</span>
+<p>把 890 B 当成"一个 token 的全部 KV"。它是<b>全局 KV</b>（global KV）的每 token 增量；滑动窗口那份 128 条的本地缓存（local KV）另算，且它是固定大小的常数，不随上下文增长。混淆这两者，后面所有"省了几倍"的账都会对不上。</p>
+</div>
+
+<h2>0.4 最短路径</h2>
+<p>如果只想用两小时看懂报告第三章（那是最关键的一章），按这个顺序：</p>
+<ol class="steps">
+<li>本篇 <a href="01-entry.html">第 1 章</a>：搞清楚"一条 KV"是什么、多少字节。没有这个，890 B 就是个没有意义的数字。</li>
+<li>本篇 <a href="04-csa2.html">第 4 章</a>：三种模式与 890 B 的账。到这里你已经能复述报告的结论。</li>
+<li>本篇 <a href="05-query.html">第 5 章</a>：为什么"只改 Q"不算退化。这一章回答的是报告没说、但你会立刻追问的那个问题。</li>
+<li>回头读 <a href="03-ced.html">第 3 章</a> 与 <a href="02-sequence.html">第 2 章</a>：补上 CED 与稀疏检索两块拼图。</li>
+</ol>
+
+<h2>0.5 容易走偏的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li><b>把 CED 当成"层数减半，模型变小"</b>。层数仍是 40，参数量也是 552B+196B；减半的是 prefill 时<b>激活</b>的层数，所以 prefill 每 token 激活 8B、decode 16B。</li>
+<li><b>把 Reuse 当成"跳过一层"</b>。Reuse 层的注意力照算，MoE 照算，只是不去重算 KV 与 Top-K 索引。</li>
+<li><b>把"压缩 4 倍"读成"质量损失 4 倍"</b>。报告的口径是相同序列长度下运行时 KV 存储约为 V4-Flash 的 1/4、持久化约为 1/8，同时整体性能<b>优于</b> V4-Flash。省的是缓存，不是能力。</li>
+<li><b>用 fp32 的字节数算 890 B</b>。890 B 是 FP4 载荷加缩放因子的结果，见第 4.4 节；用 4 字节一通道算会得到 5120 B，差一个数量级。</li>
+</ul>
+</div>
+</article>
+</main>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

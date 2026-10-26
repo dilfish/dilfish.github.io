@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>附录 A. 速查表与出处 · DSv4.1 架构导读</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='16' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EK%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="a-cheatsheet.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">DSv4.1 Flash 架构导读</a>
+</header>
+<main>
+<article>
+<h1>附录 A. 速查表与出处</h1>
+
+<h2>A.1 一条公式链</h2>
+<p>整个前向里与"省 KV"有关的式子，按依赖顺序排成一条链。左边是式子，右边是它出现在哪一节。</p>
+<pre class="fig">(1) 条目字节 = 2 H_kv d_h s        1.1
+(2) 潜在吸收 q~ = W_K^T q          1.4
+(3) 条目 = d_c 个数 = 512          1.6
+(4) 窗口感受野 R = 1 + D(W-1)      2.2
+(5) 稀疏分数 s = sum g_h ReLU(qk)  2.3
+(6) 可见集 A = TopK(512) + 窗口    2.4
+(7) CED: C_l = H_20 W_l^KV         3.3
+(8) 成本比 = 1/2 + B/(2N)          3.4
+(9) 主 KV 字节 = d_c/2 + d_c/16    4.4
+(10) 每 token 890 B = 890 = ...    4.4
+(11) o(q) 在 conv{c_j} 内          5.2
+(12) do/dq = Cov_p(c)/sqrt(d)      5.3
+(13) p ∝ p* exp(C_A dq/sqrt d)     5.4
+(14) 像集 = relint conv{c_j}       5.5
+(15) span = h'(w'+1) + 2           7.2
+(16) 内容:地址:查询 = 4:8:40       8.6</pre>
+
+<h2>A.2 数字速查</h2>
+<p>每一个都能用一行算式复现，算式在右。</p>
+<ul>
+<li><b>131,072 B</b>：64 个 KV 头的 MHA，每层每 token。\(2\times64\times512\times2\)。</li>
+<li><b>5.24 MB/token</b>：上一条乘 40 层。\(131{,}072\times40\)。</li>
+<li><b>1024 B</b>：MLA 一个 512 维潜在，fp16。\(512\times2\)。</li>
+<li><b>40.96 GB</b>：1024 B × 40 层 × 1M 上下文。</li>
+<li><b>2541</b>：20 层 SWA 的感受野。\(1+20\times127\)。</li>
+<li><b>640</b>：一层一次读出的条目数。\(512+128\)。</li>
+<li><b>16,384</b>：HSI 候选池上限。\(2048\times8\)。</li>
+<li><b>288 B</b>：主 KV 一条（FP4）。\(512/2+512/16\)。</li>
+<li><b>68 B</b>：Indexer K 一条。\(128/2+128/32\)。</li>
+<li><b>2.5</b>：等效份数 \(\sum1/m\)。\(3\times\tfrac12+1\)。</li>
+<li><b>890 B</b>：每 token 全局 KV。\(720+170\)。</li>
+<li><b>3514.25 B</b>：V4-Flash 的基线。\(21\times163+20\times4.5625\)。</li>
+<li><b>3.95</b>：省下的倍数。\(3514.25/890\)。</li>
+<li><b>50.2%</b>：N=32768 时 CED 的 prefill 比。\(657{,}920/1{,}310{,}720\)。</li>
+<li><b>543.6B</b>：MoE 专家参数总量。\(35.4\text{M}\times384\times40\)。</li>
+<li><b>3.69</b>：\(\alpha=0.8,\gamma=5\) 时投机解码的平均输出长度。\((1-0.8^6)/0.2\)。</li>
+<li><b>602</b>：1008×1008 的视觉 span。\(24\times25+2\)。</li>
+<li><b>994</b>：1344×1344 被打回 1302×1302 后的 span。\(31\times32+2\)。</li>
+<li><b>968</b>：1920×1080 缩到 1708×966 后的 span。\(23\times42+2\)。</li>
+<li><b>5184 / 576</b>：一张 1008² 的 patch 数与视觉 token 数。\(72^2\) 与 \(24^2\)。</li>
+<li><b>4 / 8 / 40</b>：内容、地址、查询的刷新次数（三个时钟域）。</li>
+</ul>
+
+<h2>A.3 出处</h2>
+<p>本篇的全部结构数字来自 DeepSeek 的技术报告，解读框架来自 zartbot 的逐节分析；两本书只提供起点概念，不含报告里的任何数字。</p>
+<ul>
+<li><b>技术报告</b>：DeepSeek-V4.1-Flash: Pushing the Limits of KV Cache Compression。huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash 仓库下的 <code>DeepSeek_V41_Tech_Report.pdf</code>。</li>
+<li><b>逐节解读</b>（本篇的叙述顺序与若干"为什么"来自它）：zartbot, <i>DeepSeek-V4.1 Flash: 把 KV Cache 压缩推到极致</i>, 2026 年 9 月。zartbot.github.io/blog/model_arch/dsv41flash_arch/</li>
+<li><b>起点书一</b>：Sebastian Raschka, <i>Build a Large Language Model (From Scratch)</i>, Manning。中文镜像：musetask.github.io/bllm/。本篇引用的第 3、4、5 章。</li>
+<li><b>起点书二</b>：Sebastian Raschka, <i>Build a Reasoning Model (From Scratch)</i>, Manning。中文镜像：musetask.github.io/barm/。本篇引用的 2.8 节（KV cache）。</li>
+<li><b>本机已有推导</b>：<a href="../math/07-attention.html">数学基础第 7 节</a>（缩放与凸组合）、<a href="../math/09-gqa.html">第 9 节</a>（GQA 的字节账）、<a href="../math/10-kv-cache.html">第 10 节</a>（KV cache 的复杂度）。</li>
+</ul>
+<p>报告引用的前身工作，按本篇出现的顺序：</p>
+<ul>
+<li>YoCo（You Only Cache Once）—— CED 的来源，arXiv:2405.05254。</li>
+<li>Cross-Layer Attention / IndexCache / You Only Index Once / HySparse —— 跨层复用 KV 或索引的四条路线，对应第 4.3 节的三种模式。</li>
+<li>HISA —— 分层索引（块级粗筛 + token 级精筛），HSI 的对照物。</li>
+<li>PowerAttention —— SWA 感受野随层衰减的实验依据，bounded replay 的取舍靠它。</li>
+</ul>
+
+<h2>A.4 术语表</h2>
+<ul>
+<li><b>MLA</b>（multi-head latent attention）：K、V 由同一个低维潜在向量的上投影得到，缓存里只存潜在向量。</li>
+<li><b>SWA</b>（sliding window attention）：只看最近 \(W\) 个位置。</li>
+<li><b>CSA2</b>（compressed sparse attention, v2）：窗口 + 稀疏检索 + 跨层共享 KV 与索引的合成块。</li>
+<li><b>CED</b>（causal encoder-decoder）：前 20 层编码、后 20 层复用编码器末端隐状态导出的全局 KV。</li>
+<li><b>Full / Reindex / Reuse</b>：三种缓存状态——三样都刷新 / 数据命中地址重算 / 全命中只读。</li>
+<li><b>HSI</b>（hierarchical sparse indexer）：先按块最大分选块，再在候选池内选位置。</li>
+<li><b>bounded replay</b>：Decoder 只重放最后 \(W\) 个位置来近似恢复局部 KV。</li>
+<li><b>mHC</b>：多条残差流，混合矩阵用 Sinkhorn 迭代约束为双随机。</li>
+<li><b>Engram</b>：n-gram 哈希查表的条件记忆，196B 参数。</li>
+<li><b>DSpark</b>：3 层草稿模型 + 并行 5 位 + Markov 头的投机解码。</li>
+<li><b>MXFP4</b>：OCP 的 4 bit 格式，E2M1 载荷 + 每 16 通道一个 E4M3 缩放因子。</li>
+<li><b>ViT</b>：视觉 Transformer，双向、无因果掩码；这里 32 层、16 头、每头 64 维。</li>
+<li><b>span</b>：插入主干的视觉位置总数，含行标记与首尾标记，\(h'(w'+1)+2\)。</li>
+<li><b>QAT</b>（quantization-aware training）：前向模拟量化、反向直通梯度，让模型适应低精度缓存。</li>
+<li><b>AGU / TLB</b>：地址生成单元与地址翻译缓存；报告用它们类比 Indexer 与 HSI 候选池。</li>
+</ul>
+
+<h2>A.5 三问自检</h2>
+<p>读完报告任意一节，用这三个问题检验自己是不是真的读懂了。</p>
+<ol class="steps">
+<li><b>它动的是三个因子里的哪一个</b>（条目大小 / 条数 / 层数）？如果答不出来，说明还没定位。</li>
+<li><b>它省了多少字节或多少 FLOP</b>？必须能写出算式，并且分母是同一口径（每 token、每层、还是每会话）。</li>
+<li><b>它付了什么代价</b>？三种常见代价：精度近似（bounded replay、FP4）、表达力受限（同一份 KV 的 512 维倾斜族）、训练复杂度（HSI 要求训推同构）。</li>
+</ol>
+<div class="key"><span class="tag">判断方法</span>
+<p>三个问题都答得出，这一节才算读完；只答得出第一个，是"知道名字"而不是"理解结构"。</p>
+</div>
+</article>
+</main>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>

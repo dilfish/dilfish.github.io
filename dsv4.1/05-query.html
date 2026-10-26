@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>5. 只改 Q 为什么够：注意力是指数族 · DSv4.1 架构导读</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='16' text-anchor='middle' fill='white' font-family='Georgia,serif'%3EK%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<link rel="stylesheet" href="../assets/css/gpu.css">
+</head>
+<body data-page="05-query.html">
+<header class="topbar">
+<a class="btn" href="../index.html" title="全部文档">&#9776;</a>
+<a class="brand" href="index.html">DSv4.1 Flash 架构导读</a>
+</header>
+<main>
+<article>
+<h1>5. 只改 Q 为什么够：注意力是指数族</h1>
+
+<h2>5.1 把一次读出拆成三个对象</h2>
+<p>第 4 章说 36 层只复用别人算好的 KV 与 Top-K，自己只算 Q。这听起来像是在"用同一份材料做 36 道不同的菜"，很可疑。这一章把它证清楚：<b>固定材料的注意力，仍然是一个 512 维的指数族；改 Q 就是在族内任意移动。</b></p>
+<p>先约定一次稀疏注意力的读出。设被选中的条目集合是 \(A\)，每个条目是一个向量 \(c_j\in\mathbb{R}^d\)（参考实现里 key 和 value 是同一个 \(c_j\)，这正是第 1.4 节 MLA 的结论），把它们按行堆成矩阵 \(C_A\in\mathbb{R}^{|A|\times d}\)。那么</p>
+\[
+\begin{aligned}
+o(q)&=\sum_{j\in A}p_j(q)\,c_j,\\
+p(q)&=\operatorname{softmax}\!\big(\tfrac{1}{\sqrt d}\,C_A q\big).
+\end{aligned}
+\]
+<p>三个可变输入各管一件事：<b>内容</b> \(C_A\)（读什么）、<b>地址</b> \(A\)（从哪读，离散）、<b>查询</b> \(q\)（怎么读）。三种模式就是"这三样里刷新哪几样"：Full 三样都刷，Reindex 刷地址与查询，Reuse 只刷查询。</p>
+<div class="key"><span class="tag">判断方法</span>
+<p>三者有一条单向依赖：\(C\to A\to\) 读出，而 \(q\) 只在读出端注入。所以复用只能自上而下——可以"复用内容顺带复用地址"（Reuse），可以"复用内容但重选地址"（Reindex），<b>不可以"换了内容却沿用旧地址"</b>。CSA2 的三种模式不是三个并列的设计，而是这条依赖链上仅有的三种合法取法。</p>
+</div>
+
+<h2>5.2 输出一定落在凸包里</h2>
+<p>\(p_j\ge 0\) 且 \(\sum_j p_j=1\)，所以 \(o(q)\) 是 \(\{c_j\}\) 的<b>凸组合</b>（convex combination）。凸组合的意思：每个坐标都介于 \(c_j\) 对应坐标的最小值与最大值之间。因此</p>
+\[
+o(q)\in\operatorname{conv}\{c_j:j\in A\}
+\qquad\text{对一切 }q .
+\]
+<p>这条结论在<a href="../math/07-attention.html">数学基础第 7.4 节</a>出现过一次，当时只说了"不会凭空造出超出候选范围的值"。现在要问的是更强的问题：<b>改 \(q\) 能在这个凸包里走多远？</b></p>
+<p>先手算一个两维的例子，把后面所有公式都落到实处。取三个条目</p>
+\[
+c_1=(1,0),\quad c_2=(0,1),\quad c_3=(1,1),
+\]
+\[
+d=2,\qquad \sqrt d=1.4142 .
+\]
+<p>代入三个查询：</p>
+<pre class="fig">q        p (c1,c2,c3)     o
+ 1.41    0.42 0.16 0.42  0.84 0.58
+-1.41    0.21 0.58 0.21  0.42 0.79
+ 0.00    0.33 0.33 0.33  0.67 0.67</pre>
+<p>第一行：\(q\) 与 \(c_1,c_3\) 对齐，权重偏向它们，输出靠近线段 \(c_1c_3\) 的中间。第二行：反号，权重倒向 \(c_2\)，输出跑到三角形的另一侧。第三行：全零查询，三个条目打分相同，输出正好是<b>重心</b> \((2/3,2/3)\)。</p>
+<div class="note"><p>这张表就是"只改 Q"的全部内容：三个条目一个都没变，只改查询，输出就在三角形内从 \((0.845,0.578)\) 走到 \((0.424,0.788)\)。它们都在 \(\operatorname{conv}\{c_1,c_2,c_3\}\) 里，也都在它的<b>内部</b>——因为三行概率没有一个是零。</p></div>
+
+<h2>5.3 改 Q 的一次微小移动：Jacobian 就是协方差</h2>
+<p>看局部。对 \(q\) 求导。先算 softmax 的导数，这是一条要背下来的式子：</p>
+\[
+\frac{\partial p_j}{\partial q}
+=\frac{1}{\sqrt d}\,p_j\Big(c_j-\sum_{i}p_i c_i\Big)
+\]
+\[
+=\frac{1}{\sqrt d}\,p_j\,(c_j-o).
+\]
+<p>推导只要两步：\(\partial z_j/\partial q=c_j/\sqrt d\)；对 \(\log p_j=z_j-\log\sum_i e^{z_i}\) 求导得 \(\partial_z \log p_j=\delta_{jk}-p_k\)。两者相乘即可。</p>
+<p>再把它代进输出 \(o=\sum_j p_j c_j\)：</p>
+\[
+\frac{\partial o}{\partial q}
+=\frac{1}{\sqrt d}\sum_j p_j\,(c_j-o)\,c_j^{\top}
+=\frac{1}{\sqrt d}\,\Sigma_p ,
+\]
+\[
+\Sigma_p=\sum_j p_j c_jc_j^{\top}-oo^{\top}.
+\]
+<p>其中 \(\Sigma_p\) 叫协方差矩阵。这个式子的意思是 \(\Sigma_p=\sum_j p_j(c_j-o)(c_j-o)^\top\)，即每个条目相对均值的偏差张成的加权外积和。</p>
+<p>于是得到一句可以当工具用的话：<b>注意力输出对查询的 Jacobian，就是当前权重下条目的协方差（除以 \(\sqrt d\)）。</b>它是半正定对称矩阵，秩不超过 \(d\)，也不超过 \(|A|-1\)（因为 \(\sum_j p_j(c_j-o)=0\) 给出一个零方向）。</p>
+<p>回到例子，在 \(q=(1.414,0)\) 处，\(p=(0.4223,0.1554,0.4223)\)、\(o=(0.8446,0.5777)\)，算得</p>
+\[
+\frac{\partial o}{\partial q}=\Sigma_p/\sqrt2
+=\begin{pmatrix}0.0928&-0.0464\\ -0.0464&0.1725\end{pmatrix}.
+\]
+<p>用差分验算：对 \(q\) 的第二个分量加 \(\pm10^{-6}\)，输出变化率是 \((-0.0464,\,0.1725)\)，与上面第二列一致。这一步值得亲手按一遍，它是"梯度正常回流"这句话的具体含义：Reuse 层没有 Indexer、没有 Top-K，但 \(\partial o/\partial q\) 是光滑的，梯度照常传回 \(W_q\)。</p>
+
+<h2>5.4 改 Q 的全局效果：对基线分布做指数倾斜</h2>
+<p>局部看完了看整体。把源层（发布这份 KV 与 Top-K 的那层）的查询记为 \(q^\ast\)，它对应的分布 \(p^\ast=\operatorname{softmax}(C_Aq^\ast/\sqrt d)\) 叫<b>基线分布</b>。本层的查询写成 \(q=q^\ast+\Delta q\)。注意内积是可加的：\(\langle q,c_j\rangle=\langle q^\ast,c_j\rangle+\langle\Delta q,c_j\rangle\)，而 \(p^\ast_j\propto e^{\langle q^\ast,c_j\rangle/\sqrt d}\) 只是被缩放了一个与 \(j\) 无关的常数，所以</p>
+\[
+p_j(q)=p^\ast_j\cdot\frac{e^{t_j}}{\sum_i p^\ast_i e^{t_i}},
+\qquad
+t=\frac{1}{\sqrt d}\,C_A\,\Delta q .
+\]
+<p>也就是</p>
+\[
+p_j(q)\ \propto\ p^\ast_j\,e^{\,t_j}.
+\]
+<p>这个操作在统计里有名字：<b>指数倾斜</b>（exponential tilting）。它的含义是"先按基线概率给每个条目一个底分，再按 \(t_j\) 抬升或压低"。三种极端都在里面：取 \(t\) 使某一项远大于其他，分布逼近 one-hot（单条读出）；取 \(t\) 为常数，分布不变；中间就是任意软插值。</p>
+<p>能实现哪些 \(t\)？只有那些能写成 \(C_A\Delta q\) 的。所有可达的倾斜构成一个线性子空间：</p>
+\[
+\mathcal T=\{C_A\Delta q:\Delta q\in\mathbb{R}^{d}\}=\operatorname{col}(C_A),
+\]
+\[
+\dim\mathcal T=\operatorname{rank}(C_A)\le\min(d,|A|).
+\]
+<p>代入第 4 章的配置：\(d=512\)（潜在维），\(|A|=K+W=512+128=640\)（512 条选中 + 128 条窗口）。于是</p>
+\[
+\dim\mathcal T\le 512<640-1=639 .
+\]
+<p>640 个条目上的概率分布处在一个 639 维的单纯形里，而这里只能到达其中至多 512 维的一片。<b>至少 127 个方向的重新加权，是任何 \(\Delta q\) 都做不到的。</b>这不是缺陷，是"共用一份记忆"必须付的价——下一节算清楚这个价的边界。</p>
+
+<h2>5.5 像集：恰好是凸包的相对内部</h2>
+<p>现在问最完整的问题：让 \(q\) 取遍整个 \(\mathbb{R}^d\)，\(o(q)\) 的像集是什么？答案不是"凸包"这么含糊，而是<b>凸包的相对内部</b>（relative interior，记 \(\operatorname{relint}\)）：去掉边界面的那部分。</p>
+<p>把基线权重写成 \(\rho_j=p^\ast_j>0\)（\(\sum_j\rho_j=1\)），并定义对数配分函数</p>
+\[
+\psi(q)=\log\sum_{j=1}^{n}\rho_j\,e^{\langle q,c_j\rangle},
+\]
+\[
+p_j(q)=\rho_j\,e^{\langle q,c_j\rangle-\psi(q)} .
+\]
+<p>（把 \(1/\sqrt d\) 并进 \(q\) 的尺度里，下式不再显式写出。）对 \(q\) 求导，指数项给出概率，于是</p>
+\[
+\nabla\psi(q)=\sum_j p_j(q)\,c_j=o(q).
+\]
+<p><b>第一步（包含）</b>：\(o\) 是凸组合，所以 \(\nabla\psi\) 的像在 \(\operatorname{conv}\{c_j\}\) 里。</p>
+<p><b>第二步（边界到不了）</b>：\(\rho_j>0\) 且指数因子恒正，所以每个 \(p_j(q)>0\)；一个坐标严格为正的凸组合不可能落在边界面上。所以像在<b>相对内部</b>。</p>
+<p><b>第三步（内部全都能到）</b>：取任意目标 \(u\in\operatorname{relint}\operatorname{conv}\{c_j\}\)，看泛函</p>
+\[
+g(q)=\langle q,u\rangle-\psi(q).
+\]
+<p>\(\psi\) 是凸函数（它是若干个线性函数的 log-sum-exp），所以 \(g\) 是凹函数；再证它不会跑向 \(-\infty\) 之外：对每个 \(j\) 有 \(\psi(q)\ge\langle q,c_j\rangle+\log\rho_j\)，取使 \(\langle q,c_j\rangle\) 最大的那个 \(j\)，由 \(u\) 在凸包里得 \(\langle q,u\rangle\le\langle q,c_j\rangle\)，于是 \(g(q)\le-\log\rho_j\)。上界一致成立，凹函数必有最大值点。在最大点处一阶条件 \(\nabla g=0\) 就是 \(u=\nabla\psi(q)=o(q)\)。</p>
+<div class="key"><span class="tag">结论</span>
+<p>\(\{o(q):q\in\mathbb{R}^d\}=\operatorname{relint}\operatorname{conv}\{c_j:j\in A\}\)。<b>只要内容与地址固定，改 Q 可以在凸包内部到达任何一点</b>——而 Full 层能做的，是换一份 \(C_A\)（换掉顶点），把输出挪到凸包之外，或者换掉整个指数族的"倾斜几何"。</p>
+</div>
+<p>顺带说明为什么这条结论不矛盾于 5.4 节的 512 维上界：凸包本身活在 \(\mathbb{R}^{512}\) 里，最多 512 维；639 维说的是"概率分布"的空间，不是"输出"的空间。同一个输出可以由许多不同的分布给出（\(640>512\)，映射不单射），所以分布侧受限、输出侧仍可满。</p>
+
+<h2>5.6 与 Full 的差距：三件事做不到</h2>
+<p>把 Full 层和 Reuse 层摆在一起，Full 层有三个随层独立变化的自由度：</p>
+<ul>
+<li><b>(F1) 查询 \(q^l\)</b>：都有，Reuse 唯一保留的就是它。</li>
+<li><b>(F2) 键值内容 \(\{c_j^l\}\)</b>：决定凸包的<b>顶点位置</b>，也决定倾斜可达的方向 \(\operatorname{col}(C_A)\)。Reuse 冻结。</li>
+<li><b>(F3) 选择集 \(S^l\)</b>：决定<b>哪些顶点存在</b>，离散。Reuse 冻结。</li>
+</ul>
+<p>对固定的 \((C^\ast,S^\ast)\) 有严格包含 \(\text{Reuse}\subseteq\text{Full}\)，而且 Full 还对所有 \((C,S)\) 取并。缺口正好是三件 Reuse 做不到的事：</p>
+<ol class="steps">
+<li><b>召回上限</b>：\(j\notin S^\ast\) 的内容根本不在 \(A\) 里，任何 \(\Delta q\) 都够不着它。更糟的是<b>上游选错，下游无法纠正</b>——这正是第 2.4 节说"稀疏检索选错就是永久损失"的确切含义。</li>
+<li><b>顶点不可移</b>：输出被钉在 \(\operatorname{conv}\{c^\ast_j\}\) 内。Full 层换 \(v_j\) 就能把输出放到凸包外（比如让某个条目带上相反的符号方向），Reuse 不能。</li>
+<li><b>倾斜几何不可换</b>：可达分布的集合是由 \(C_A^\ast\) 决定的那个固定指数族。Full 换掉 \(C^l\) 等于换掉整个族；Reuse 只能在这个族里挑一个成员。</li>
+</ol>
+<p>还有一个常被忽略的细节：RoPE 不破坏上面任何一条。RoPE 只是对 \(q\) 与 \(c_j\) 的 rope 尾（本例 512 维里的 64 维）施加一个<b>与位置相关的正交旋转</b>。正交变换保持内积：\(\langle R_pq,R_pc\rangle=\langle q,c\rangle\)，所以它被吸收进内积，凸包与倾斜的论证原样成立。</p>
+
+<h2>5.7 这套数学解释了哪几个设计</h2>
+<ul>
+<li><b>为什么 4 个 Full + 36 个 Reuse 不会退化成"4 层模型"</b>：每层还有自己的 \(q\) 与自己的局部窗口，输出可以在凸包内部任意走，而凸包的顶点是训练出来的、按层不同（CED 给每层一个 \(W_l^{KV}\)，见 3.3 节）。</li>
+<li><b>为什么 Reindex 值得存在</b>：它给的是 F3（换地址）。当召回出错时，这是比改 Q 更有效的修法：把错的顶点换进来，而不是在旧顶点里重新分配质量。</li>
+<li><b>为什么 HSI 候选池不能随便加</b>：候选池一旦固定，F3 的可选范围就被限死；训练时若允许搜全历史、推理时只给名单，就是"族被换掉但模型没被告知"，分布立刻错位。所以报告强调 HSI 是后训练阶段引入、训推同构。</li>
+<li><b>为什么 SWA 永远存在</b>：局部窗口是每层新鲜生成的，它给 \(A\) 注入了一组"本层自己的顶点"，是 Reuse 层唯一的非冻结来源——所以它必须精确（用 FP8 而不是 FP4，见 4.5 节）。</li>
+</ul>
+<div class="note"><p>报告之外还有一层推测：既然每层的 KV 空间是一个随深度变化的高维流形，或许可以用"Q 感知的参数"把下一层的空间映射回当前层，从而连 Q 都不必每层重算。原文把这类想法归入内部实验，没有给出结论。读到这里的人可以自己判断它的可行性：它要解决的是 F2，而 F2 正是上面证明里唯一不能靠 \(\Delta q\) 绕过的自由度。</p></div>
+
+<h2>5.8 容易算错的地方</h2>
+<div class="warn"><span class="tag">常见错误</span>
+<ul>
+<li><b>把"凸组合"当成"凸包内部"</b>。凸组合允许某些系数为 0，那就在边界上；\(\rho_j>0\) 才保证严格内部。训练中某些权重会饱和到接近 0，实际输出会贴近边界面。</li>
+<li><b>把 639 当成"能到达的分布维数"</b>。639 是单纯形的维数，是上界；实际可达 ≤512。</li>
+<li><b>漏掉 \(\sqrt d\)</b>。Jacobian 是 \(\Sigma_p/\sqrt d\)，不是 \(\Sigma_p\)；用差分验算时数值会对不上（差 1.414 倍）。</li>
+<li><b>以为指数倾斜能改变排序之外的任何东西</b>。它只能重新分配质量，不能引入新条目；\(t\) 只能把已有的 \(p^\ast_j\) 按比例缩放。</li>
+<li><b>把 RoPE 当成"破坏共享"</b>。正交旋转保持内积，凸包论证不受影响；真正影响共享的是 (F2)(F3)。</li>
+</ul>
+</div>
+</article>
+</main>
+<script src="../assets/katex/katex.min.js" defer></script>
+<script src="../assets/katex/auto-render.min.js" defer></script>
+<script src="series.js"></script>
+<script src="../assets/js/nav.js"></script>
+</body>
+</html>
