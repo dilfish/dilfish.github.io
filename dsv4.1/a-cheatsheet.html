@@ -27,16 +27,17 @@
 (4) 窗口感受野 R = 1 + D(W-1)      2.2
 (5) 稀疏分数 s = sum g_h ReLU(qk)  2.3
 (6) 可见集 A = TopK(512) + 窗口    2.4
-(7) CED: C_l = H_20 W_l^KV         3.3
+(7) CED: C = H_20 W^KV           3.3
 (8) 成本比 = 1/2 + B/(2N)          3.4
 (9) 主 KV 字节 = d_c/2 + d_c/16    4.4
-(10) 每 token 890 B = 890 = ...    4.4
+(10) 每 token 890 B = ...          4.4
 (11) o(q) 在 conv{c_j} 内          5.2
 (12) do/dq = Cov_p(c)/sqrt(d)      5.3
 (13) p ∝ p* exp(C_A dq/sqrt d)     5.4
 (14) 像集 = relint conv{c_j}       5.5
-(15) span = h'(w'+1) + 2           7.2
+(15) 视觉 token = ⌈H/42⌉⌈W/42⌉     7.2
 (16) 内容:地址:查询 = 4:8:40       8.6</pre>
+<p>这张表把条件都省略了。(11)–(14) 都假设<b>候选集固定、且实际参与计算的 K 与 V 是同一个向量</b>；(14) 还是理想化单头模型的结论——RoPE、以及"只旋转 K 不旋转 V"的实现要另算（5.6 节）。(7) 用的是报告式 (1) 的逐层投影 \(W_l^{KV}\)；CSA2 里只有 Full 那一层真正产出缓存。(5) 的打分函数报告未给出，见 2.3 节的说明。</p>
 
 <h2>A.2 数字速查</h2>
 <p>每一个都能用一行算式复现，算式在右。</p>
@@ -46,7 +47,7 @@
 <li><b>1024 B</b>：MLA 一个 512 维潜在，fp16。\(512\times2\)。</li>
 <li><b>40.96 GB</b>：1024 B × 40 层 × 1M 上下文。</li>
 <li><b>2541</b>：20 层 SWA 的感受野。\(1+20\times127\)。</li>
-<li><b>640</b>：一层一次读出的条目数。\(512+128\)。</li>
+<li><b>640</b>：一次全局稀疏读出的条目<b>上界</b>。\(512+128\)（短上下文或候选不足时更少）。</li>
 <li><b>16,384</b>：HSI 候选池上限。\(2048\times8\)。</li>
 <li><b>288 B</b>：主 KV 一条（FP4）。\(512/2+512/16\)。</li>
 <li><b>68 B</b>：Indexer K 一条。\(128/2+128/32\)。</li>
@@ -55,13 +56,12 @@
 <li><b>3514.25 B</b>：V4-Flash 的基线。\(21\times163+20\times4.5625\)。</li>
 <li><b>3.95</b>：省下的倍数。\(3514.25/890\)。</li>
 <li><b>50.2%</b>：N=32768 时 CED 的 prefill 比。\(657{,}920/1{,}310{,}720\)。</li>
-<li><b>543.6B</b>：MoE 专家参数总量。\(35.4\text{M}\times384\times40\)。</li>
-<li><b>3.69</b>：\(\alpha=0.8,\gamma=5\) 时投机解码的平均输出长度。\((1-0.8^6)/0.2\)。</li>
-<li><b>602</b>：1008×1008 的视觉 span。\(24\times25+2\)。</li>
-<li><b>994</b>：1344×1344 被打回 1302×1302 后的 span。\(31\times32+2\)。</li>
-<li><b>968</b>：1920×1080 缩到 1708×966 后的 span。\(23\times42+2\)。</li>
+<li><b>543.6B</b>：MoE 路由专家参数总量（不含 40 个共享专家）。\(35.4\text{M}\times384\times40\)。</li>
+<li><b>3.69</b>：\(\alpha=0.8,\gamma=5\) 时期望的<b>接受</b>草稿数。\((1-0.8^6)/0.2\)；实际输出长度再加 1（纠正或额外 token），为 \(4.69\)。</li>
+<li><b>1024</b>：<code>max_image_tokens</code>，视觉 token 上限。\(1344\times1344\) 经 3×3 合并得 \(32\times32\)，正好顶格。</li>
+<li><b>576</b>：\(1008\times1008\) 或 \(1344\times756\) 的视觉 token 数（\(24^2\) 与 \(32\times18\)）。</li>
 <li><b>5184 / 576</b>：一张 1008² 的 patch 数与视觉 token 数。\(72^2\) 与 \(24^2\)。</li>
-<li><b>4 / 8 / 40</b>：内容、地址、查询的刷新次数（三个时钟域）。</li>
+<li><b>4 / 8 / 40</b>：内容、地址、查询的刷新次数（本篇的"三个时钟域"说法，报告未用此词）。</li>
 </ul>
 
 <h2>A.3 出处</h2>
@@ -80,6 +80,7 @@
 <li>HISA —— 分层索引（块级粗筛 + token 级精筛），HSI 的对照物。</li>
 <li>PowerAttention —— SWA 感受野随层衰减的实验依据，bounded replay 的取舍靠它。</li>
 </ul>
+<p>三档出处的区分很重要：<b>报告正文</b>给出结构、290/890 一类结论与部署倍数；<b>仓库 <code>config.json</code></b> 给出未写进正文的具体数值（<code>max_image_tokens=1024</code>、<code>min_pixels=295936</code>、<code>kv_source_layer_ids</code>、<code>engram_layer_ids</code>、<code>dspark_*</code>）；<b>本篇自己算的</b>则有 4.6 的四步分解、2.5 的三本账、5 章的数学推导。报告没有披露的（Indexer 训练目标、DSpark 输入怎么取）在正文里已明确标注为外推。</p>
 
 <h2>A.4 术语表</h2>
 <ul>
@@ -89,15 +90,15 @@
 <li><b>CED</b>（causal encoder-decoder）：前 20 层编码、后 20 层复用编码器末端隐状态导出的全局 KV。</li>
 <li><b>Full / Reindex / Reuse</b>：三种缓存状态——三样都刷新 / 数据命中地址重算 / 全命中只读。</li>
 <li><b>HSI</b>（hierarchical sparse indexer）：先按块最大分选块，再在候选池内选位置。</li>
-<li><b>bounded replay</b>：Decoder 只重放最后 \(W\) 个位置来近似恢复局部 KV。</li>
+<li><b>bounded replay</b>：只重放最后 \(n_{\text{win}}\) 个位置来近似恢复 SWA KV；报告里有 Decoder（砍 prefill）与 Encoder（持久化缺 SWA KV 时补）两个版本。</li>
 <li><b>mHC</b>：多条残差流，混合矩阵用 Sinkhorn 迭代约束为双随机。</li>
 <li><b>Engram</b>：n-gram 哈希查表的条件记忆，196B 参数。</li>
 <li><b>DSpark</b>：3 层草稿模型 + 并行 5 位 + Markov 头的投机解码。</li>
-<li><b>MXFP4</b>：OCP 的 4 bit 格式，E2M1 载荷 + 每 16 通道一个 E4M3 缩放因子。</li>
-<li><b>ViT</b>：视觉 Transformer，双向、无因果掩码；这里 32 层、16 头、每头 64 维。</li>
-<li><b>span</b>：插入主干的视觉位置总数，含行标记与首尾标记，\(h'(w'+1)+2\)。</li>
+<li><b>FP4 缓存格式</b>：<b>两种</b>。主 KV 是 E2M1 + 每 <b>16</b> 通道一个 <b>E4M3</b> 缩放（跟 NVFP4 但去掉第二级全局缩放）；Indexer K 是 V4 起就用的 <b>OCP MXFP4</b>（E2M1 + 每 <b>32</b> 元素一个 <b>E8M0</b> 缩放）。两者不要混成一个格式名。</li>
+<li><b>ViT</b>：视觉 Transformer，双向、无因果掩码；这里 32 层、16 头、每头 64 维，patch 14，3×3 pixel-unshuffle，视觉 token 上限 1024。</li>
+<li><b>pixel-unshuffle</b>：把 \(3\times3\) 邻域的 9 个 patch 沿通道维拼成 9216 维，位置数降 9 倍；不是"重排 token"。</li>
 <li><b>QAT</b>（quantization-aware training）：前向模拟量化、反向直通梯度，让模型适应低精度缓存。</li>
-<li><b>AGU / TLB</b>：地址生成单元与地址翻译缓存；报告用它们类比 Indexer 与 HSI 候选池。</li>
+<li><b>AGU / TLB</b>：<b>本篇的类比</b>（报告没有这套语言），用来记 Indexer 与 HSI 候选池的分工。</li>
 </ul>
 
 <h2>A.5 三问自检</h2>

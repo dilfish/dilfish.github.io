@@ -21,10 +21,10 @@
 
 <h2>0.1 先把两本书压成一页</h2>
 <p>《Build a Large Language Model (From Scratch)》（下称 bllm）教你造一个 GPT：分词、注意力、Transformer 块、预训练、微调。《Build a Reasoning Model (From Scratch)》（下称 barm）接着教你把它变成会推理的模型：文本生成与 KV cache、用验证器打分、推理期扩展、GRPO 强化学习、蒸馏。</p>
-<p>把它们摊开看，<b>真正被 DeepSeek-V4.1 Flash 用到的只有前一半</b>：一层标准因果自注意力，加上它的 KV cache。剩下的一切——MLA、滑动窗口、稀疏索引、跨层复用、FP4——都是在"这一层的 KV 太占地方"这个问题上做的工程。</p>
+<p>把它们摊开看，<b>本导读的主线是"这一层的 KV 太占地方"</b>：一层标准因果自注意力，加上它的 KV cache，是 MLA、滑动窗口、稀疏索引、跨层复用、FP4 这一串改动的共同起点。但模型并不只有这一条线：MoE 换掉 FFN，mHC 改残差，Engram 加了一条查表记忆，DSpark 改解码方式（第 6 章）。它们和 KV 压缩互补，不能都归因于"缓存太大"。</p>
 <ul>
 <li><b>bllm 第 3 章</b>：Q、K、V，\(\langle q,k\rangle/\sqrt d\)，因果掩码，多头。→ 报告里每一个注意力仍然长这样，只是"读哪些条目"被截断了。</li>
-<li><b>bllm 第 4 章</b>：LayerNorm、GELU、残差、Transformer 块。→ 报告里的 MoE 层与 mHC 残差是这两样的替换品。</li>
+<li><b>bllm 第 4 章</b>：LayerNorm、GELU、残差、Transformer 块。→ 报告里 MoE 替换了前馈子层（不只是把 GELU 换个激活），mHC 替换了残差连接，归一化也换成了 RMSNorm。</li>
 <li><b>barm 2.8</b>：KV cache 让 decode 从 \(O(T^2)\) 变成每步 \(O(T)\)，代价是"每层每个历史位置各存一份 K 和 V"。→ <b>这一句就是整篇报告的动机</b>。</li>
 <li><b>barm 第 4 章</b>：温度、top-p、自一致性。→ 与 DSpark 的投机解码共享同一套"从一个分布里取一个 token"的语言。</li>
 <li><b>barm 第 6、7 章</b>：GRPO、裁剪、KL。→ 报告里 Indexer 的辅助损失只在结构上像它；本篇不展开后训练。</li>
@@ -42,7 +42,18 @@
 <li><b>CED（因果编码器-解码器）</b>：前 20 层当编码器，把第 20 层的隐状态投影成全局 KV；后 20 层不再各自生成 KV。省的是"几层各存一份"，同时把 prefill 算力砍半。</li>
 <li><b>CSA2</b>：上面几条的合成体。三种模式 Full / Reindex / Reuse 决定每一层刷新"内容、地址、查询"里的哪几样。</li>
 </ul>
-<p>另外还有四个"不是新概念、但量级变了"的东西：MoE（384 个专家选 6 个）、FP4 量化（每通道从 1 字节压到 0.5 字节）、Engram（n-gram 哈希查表，196B 参数的"条件记忆"）、DSpark（3 层草稿模型投机解码）。它们都在第 6 章。</p>
+<p>另外还有四个"不是新概念、但量级变了"的东西：MoE（384 个专家选 6 个）、FP4 量化（载荷每通道从 1 字节压到 0.5 字节）、Engram（n-gram 哈希查表，196B 参数的"条件记忆"）、DSpark（3 层草稿模型投机解码）。它们都在第 6 章。</p>
+<div class="tablewrap tight"><table>
+<thead><tr><th>机制</th><th>主要改变</th><th>别混同为</th></tr></thead>
+<tbody>
+<tr><td>MLA</td><td>单条缓存的宽度（只存潜在向量）</td><td>减少每步读取流量</td></tr>
+<tr><td>FP4</td><td>单条缓存的数值格式</td><td>不损失任何精度</td></tr>
+<tr><td>压缩 / 窗口 / Top-K</td><td>缓存条目数与每次读出的条目数</td><td>消除 Indexer 的全历史扫描</td></tr>
+<tr><td>CED 与跨层复用</td><td>全局 KV 的来源与持有份数</td><td>复用注意力输出</td></tr>
+<tr><td>HSI</td><td>后续 Reindex 的候选搜索域</td><td>让所有选择成本变成常数</td></tr>
+<tr><td>MoE / mHC / Engram / DSpark</td><td>FFN、残差、记忆、解码</td><td>KV 压缩的替代品</td></tr>
+</tbody></table></div>
+<p>这张表是后面八章的地图：每读到一个机制，先确认它改的是哪一格，再确认它<b>没有</b>顺带解决右边那一列的问题。</p>
 
 <h2>0.3 先给你一个量级</h2>
 <p>同一份 1M 上下文，不同架构的 KV 账单差多少？先只算"每 token 字节"这一项，其余不动。</p>
@@ -72,7 +83,7 @@ MLA + FP4 (V4.1 Flash)         288 B</pre>
 <li><b>把 CED 当成"层数减半，模型变小"</b>。层数仍是 40，参数量也是 552B+196B；减半的是 prefill 时<b>激活</b>的层数，所以 prefill 每 token 激活 8B、decode 16B。</li>
 <li><b>把 Reuse 当成"跳过一层"</b>。Reuse 层的注意力照算，MoE 照算，只是不去重算 KV 与 Top-K 索引。</li>
 <li><b>把"压缩 4 倍"读成"质量损失 4 倍"</b>。报告的口径是相同序列长度下运行时 KV 存储约为 V4-Flash 的 1/4、持久化约为 1/8，同时整体性能<b>优于</b> V4-Flash。省的是缓存，不是能力。</li>
-<li><b>用 fp32 的字节数算 890 B</b>。890 B 是 FP4 载荷加缩放因子的结果，见第 4.4 节；用 4 字节一通道算会得到 5120 B，差一个数量级。</li>
+<li><b>用 fp32 的字节数算 890 B</b>。890 B 是 FP4 载荷加缩放因子的结果，见第 4.4 节。用 4 字节一通道算，<b>只算主 KV</b> 是 \(512\times4\times2.5=5120\) B；把 Indexer K 也算上则是 \((512+128)\times4\times2.5=6400\) B。两个口径都和 890 B 差一个数量级，但别混成一个数。</li>
 </ul>
 </div>
 </article>

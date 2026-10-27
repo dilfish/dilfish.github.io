@@ -9,7 +9,7 @@ window.SERIES = {
     { file: '04-csa2.html', num: '4', title: '层维度（下）：CSA2 与每 token 890 字节' },
     { file: '05-query.html', num: '5', title: '只改 Q 为什么够：注意力是指数族' },
     { file: '06-parts.html', num: '6', title: '其余部件：MoE、mHC、Engram、DSpark' },
-    { file: '07-vision.html', num: '7', title: '视觉路径：一张图怎么变成 602 个 token' },
+    { file: '07-vision.html', num: '7', title: '视觉路径：一张图怎么变成至多 1024 个视觉 token' },
     { file: '08-train-deploy.html', num: '8', title: '训练与部署：三个阶段、两个口径、三个时钟域' },
     { file: 'a-cheatsheet.html', num: 'A', title: '附录 A. 速查表与出处' }
   ]

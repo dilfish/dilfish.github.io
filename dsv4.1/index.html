@@ -22,7 +22,7 @@
 <h1>DeepSeek-V4.1 Flash：从两本书接上去</h1>
 <div class="plainbox">
 <p>这一页写给这样的读者：<b>读过《Build a Large Language Model (From Scratch)》和《Build a Reasoning Model (From Scratch)》，微积分和线代学过但计算细节忘了</b>。所以不假设你记得 softmax 的导数、凸组合的定义、矩阵吸收的推导；每用一个概念，就在原地重新定义一遍，再用这一节自己的数字验算。</p>
-<p>两本书带你到的地方是"一层标准的因果自注意力 + KV cache + 采样"。DeepSeek-V4.1 Flash 的技术报告则默认你已经知道 <b>MLA 的潜在向量、滑动窗口、稀疏 Top-K 检索、跨层 KV 复用、FP4 量化、专家混合</b>。中间那一段就是这七篇要补的：每补一个，都标出它对应两本书的哪一节，以及它在 KV 账单上省掉了多少字节。</p>
+<p>两本书带你到的地方是"一层标准的因果自注意力 + KV cache + 采样"。DeepSeek-V4.1 Flash 的技术报告则默认你已经知道 <b>MLA 的潜在向量、滑动窗口、稀疏 Top-K 检索、跨层 KV 复用、FP4 量化、专家混合</b>。中间那一段就是这九篇正文加一篇附录要补的：每补一个，都标出它对应两本书的哪一节，以及它在 KV 账单上省掉了多少字节。</p>
 <p>全篇围绕技术报告的一句话展开：<b>KV Cache 的成本是三个因子的乘积</b>，而 V4.1 Flash 把三个因子各自压了一次。</p>
 </div>
 
@@ -64,10 +64,10 @@
 <p class="note">从 barm 2.8 的 KV cache 出发，把一条条目从 131,072 B（64 个 KV 头的 MHA）压到 1,024 B（一个 512 维潜在向量）；MLA 的"矩阵吸收"为什么成立；64 维 RoPE + 448 维 NoPE 的来历。</p></li>
 
 <li><div class="row"><span class="n">2</span><a href="02-sequence.html">序列维度：滑动窗口与稀疏检索</a></div>
-<p class="note">全局注意力为什么在 1M 上下文下必然爆掉；窗口 128 的真实感受野（两层 255，20 层 2560）；Indexer 的打分公式与 Top-512；为什么 decode 每步只读 640 条。</p></li>
+<p class="note">全局注意力为什么在 1M 上下文下必然爆掉；窗口 128 的真实感受野（两层 255，20 层 2541，常用近似 2560）；Indexer 的打分公式与 Top-512；decode 每步的存储、检索、读出三本账为什么要分开。</p></li>
 
 <li><div class="row"><span class="n">3</span><a href="03-ced.html">层维度（上）：CED 把 prefill 减半</a></div>
-<p class="note">YoCo 的核心：KV 只由第 20 层产出，后 20 层用各自的投影去读。prefill 计算量比 \\(1/2+B/2N\\) 的推导，N=32768 时 50.2%；bounded replay 为什么只回放最后 128 个位置。</p></li>
+<p class="note">YoCo 的核心：KV 只由第 20 层产出，后 20 层复用这一份（一般 CED 则允许每层自己的投影）。prefill 计算量比 \(1/2+B/2N\) 的推导，N=32768 时 50.2%；bounded replay 为什么只回放最后 128 个位置。</p></li>
 
 <li><div class="row"><span class="n">4</span><a href="04-csa2.html">层维度（下）：CSA2 与每 token 890 字节</a></div>
 <p class="note">压缩比 m=2 的合并、m=1 的退化；Full / Reindex / Reuse 三种模式的两个指示量；FP4 的 288 B 与 68 B 逐项算；从 3514 B/token 到 890 B/token 的四步；HSI 候选池 16384 个位置怎么来的。</p></li>
@@ -76,13 +76,13 @@
 <p class="note">全篇数学核心。输出是凸组合；softmax 的 Jacobian 就是协方差；改 Q 等于对基线分布做指数倾斜；可达倾斜空间的维数只有 512；像集恰是顶点集凸包相对内部；Reuse 相比 Full 缺的三件事。</p></li>
 
 <li><div class="row"><span class="n">6</span><a href="06-parts.html">其余部件：MoE、mHC、Engram、DSpark</a></div>
-<p class="note">384 选 6 与 8B/16B 激活参数的对应；mHC 的 4 条残差流与 Sinkhorn 迭代为什么收敛到双随机矩阵；Engram 的 n-gram 哈希查表；DSpark 的期望接受长度 \\((1-\alpha^{\gamma+1})/(1-\alpha)\\)。</p></li>
+<p class="note">384 选 6 与 8B/16B 激活参数的对应；mHC 的 4 条残差流与 Sinkhorn 迭代为什么收敛到双随机矩阵（注意它只约束直接混合路径，不是完整 Jacobian）；Engram 的 n-gram 哈希查表；DSpark 的期望接受长度 \(\sum\alpha^k\) 与实际输出长度 \(1+\sum\alpha^k\)。</p></li>
 
-<li><div class="row"><span class="n">7</span><a href="07-vision.html">视觉路径：一张图怎么变成 602 个 token</a></div>
-<p class="note">从 bllm 的 token embedding 接过去：patch 14、预算公式 \\(h'(w'+1)+2\\)、1344² 为什么会被打回 1302²、5184 → 576 的 3×3 重排、2D RoPE、多模态的两组专家偏置。</p></li>
+<li><div class="row"><span class="n">7</span><a href="07-vision.html">视觉路径：一张图怎么变成至多 1024 个视觉 token</a></div>
+<p class="note">从 bllm 的 token embedding 接过去：patch 14、<code>max_image_tokens=1024</code> 与 544²–1344² 的两端约束、1344² 为什么正好顶格、5184 → 576 的 3×3 pixel-unshuffle、2D RoPE、多模态的两组专家偏置。顺带清掉一个曾经的错误：视觉侧没有"行标记"。</p></li>
 
 <li><div class="row"><span class="n">8</span><a href="08-train-deploy.html">训练与部署：三个阶段、两个口径、三个时钟域</a></div>
-<p class="note">预训练（64K→1M，无 HSI）与后训练（HSI + FP4 QAT）的分工；Indexer 的蒸馏损失为什么必须存在；运行时 1/4 与持久化 1/8 的口径差别；报告的体系结构视角：三种缓存状态、AGU/TLB、4×8×40 三个时钟域。</p></li>
+<p class="note">预训练（64K→1M，无 HSI）与后训练（HSI + FP4 QAT + 模拟 bounded replay）的分工；运行时 1/4 = 架构+精度，持久化 1/8 = 1/2（不再存 SWA KV）× 1/4；4/8/40 三个刷新次数。Indexer 训练目标报告未披露，本篇已标注为外推。</p></li>
 
 <li><div class="row"><span class="n">A</span><a href="a-cheatsheet.html">附录 A. 速查表与出处</a></div>
 <p class="note">一页公式表、全部数字的出处、术语中英对照、以及"哪里容易算错"的清单。</p></li>
@@ -103,7 +103,7 @@
 <tr><td>\(N\)</td><td>上下文长度（token）</td><td>最长约 1M</td></tr>
 <tr><td>\(S\)</td><td>每 token 的全局 KV 字节</td><td>890 B</td></tr>
 </tbody></table></div>
-<p class="note">下标从 1 开始（数学惯例），报告与代码里的层号从 0 开始。看到"第 20 层"时按上下文判断是 \(l=20\) 还是第 21 个块；本篇一律用报告的写法：层号 \(l\in\{1,\dots,40\}\)，第 20 层是 Encoder 的最后一层。</p>
+<p class="note">数学惯例下标从 1 开始，而报告与代码里的 <code>layer_idx</code> 从 0 开始。本篇正文一律用 <b>1-based 层号</b> \(l\in\{1,\dots,40\}\)（第 1–20 层是 Encoder，第 21–40 层是 Decoder）；介绍来源层时同时给出 0-based 下标，例如 <code>layer_idx = 2, 8, 14, 20</code> 就是第 3、9、15、21 层。</p>
 
 <footer>
 <p>为《DSv4.1 Flash 架构导读》编写 · 9 篇正文 + 1 篇附录 · 公式使用本地 KaTeX 渲染，可离线阅读。</p>
