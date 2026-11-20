@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>神经网络的数学基础</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f8f'/%3E%3Ctext x='16' y='23' font-size='18' text-anchor='middle' fill='white' font-family='Georgia,serif'%3E∇%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/css/math.css">
+<style>body[data-page] .katex-display>.katex{width:100%;min-width:0;white-space:normal}body[data-page] .katex-display>.katex .base{white-space:normal}</style></head>
+<body data-page="index">
+<header class="topbar"><a class="btn" href="../index.html" title="全部文档">☰</a><a class="brand" href="index.html">神经网络的数学基础</a></header>
+<main><article>
+<p class="crumb"><a href="../index.html">全部文档</a><span class="sep">/</span><span>系列目录</span></p>
+<h1>神经网络的数学基础</h1>
+<div class="plainbox">
+<p>这是一门从函数、矩阵和概率出发，推到训练算法的课程。目标不是背公式，而是能回答：网络前向时算了什么？loss 为什么这样定义？梯度从哪里来？参数为什么按这个方向更新？深层网络为什么会不稳定，又为什么残差、归一化和合适的初始化能改善它？</p>
+<p>课程采用列向量和 batch-first 两套明确记号，所有重要公式都配合形状检查。正文区分“预测残差”与“残差连接”，并用同一个两层分类网络贯穿前向、loss、反向传播、优化和有限差分检查。</p>
+</div>
+<h2>怎么读</h2>
+<ol class="steps">
+<li><b>先建立语言：</b>第 0～3 节定义张量、梯度、线性层和前向传播。</li>
+<li><b>再学训练核心：</b>第 4～7 节从 loss 推到完整反向传播。</li>
+<li><b>最后理解深层训练：</b>第 8～14 节讨论激活、优化器、残差、归一化、初始化、泛化和数值稳定性。</li>
+<li><b>用案例收束：</b>第 15 节完整手算一次参数更新；附录 B 给出练习和实现顺序。</li>
+</ol>
+<h2>章节</h2>
+<ul class="index">
+<li><div class="row"><span class="n">0</span><a href="00-preliminaries.html">课程地图：网络究竟在学习什么</a></div><p class="note">从数据、模型、loss、梯度到优化器，先看完整训练闭环，并区分预测残差与残差连接。</p></li>
+<li><div class="row"><span class="n">1</span><a href="01-notation.html">记号、向量、矩阵与张量形状</a></div><p class="note">固定列向量和 batch-first 约定，逐项检查矩阵乘法与梯度的形状。</p></li>
+<li><div class="row"><span class="n">2</span><a href="02-gradients.html">函数、偏导数、梯度与 Jacobian</a></div><p class="note">从一阶近似和链式法则理解梯度，而不是把梯度当成神秘的“误差反传值”。</p></li>
+<li><div class="row"><span class="n">3</span><a href="03-forward.html">线性层、激活函数与前向传播</a></div><p class="note">用一个两层 MLP 写出完整计算图。</p></li>
+<li><div class="row"><span class="n">4</span><a href="04-loss.html">Loss：MSE、BCE 与交叉熵</a></div><p class="note">从误差与最大似然解释常见损失，并区分 logits、概率、标签和 metric。</p></li>
+<li><div class="row"><span class="n">5</span><a href="05-backprop-scalar.html">反向传播 I：标量链式法则与计算图</a></div><p class="note">从一个神经元开始，解释局部梯度、上游梯度和分叉处的梯度相加。</p></li>
+<li><div class="row"><span class="n">6</span><a href="06-backprop-vector.html">反向传播 II：矩阵公式与 batch</a></div><p class="note">推导 dW、db、da，解释外积、转置和 batch 求和。</p></li>
+<li><div class="row"><span class="n">7</span><a href="07-softmax-ce.html">softmax + cross entropy 的梯度</a></div><p class="note">完整推导 softmax Jacobian 与熟悉的 p−y。</p></li>
+<li><div class="row"><span class="n">8</span><a href="08-activations.html">激活函数与梯度流</a></div><p class="note">sigmoid、tanh、ReLU、GELU、SiLU 的导数与饱和问题。</p></li>
+<li><div class="row"><span class="n">9</span><a href="09-optimizers.html">梯度下降、Momentum、Adam 与 AdamW</a></div><p class="note">从最速下降推到现代优化器，并区分 AdamW 和 L2 正则。</p></li>
+<li><div class="row"><span class="n">10</span><a href="10-residual.html">残差：误差与残差连接</a></div><p class="note">解释 y=x+F(x) 的恒等梯度路径，但不把它夸大成“永不梯度消失”。</p></li>
+<li><div class="row"><span class="n">11</span><a href="11-normalization.html">BatchNorm、LayerNorm 与 RMSNorm</a></div><p class="note">均值、方差、尺度不变性及其反向传播直觉。</p></li>
+<li><div class="row"><span class="n">12</span><a href="12-init-stability.html">初始化、梯度消失与梯度爆炸</a></div><p class="note">用方差传播理解 Xavier、He、归一化和残差的关系。</p></li>
+<li><div class="row"><span class="n">13</span><a href="13-regularization.html">泛化、正则化与 dropout</a></div><p class="note">训练误差、泛化误差、weight decay、dropout 和 label smoothing。</p></li>
+<li><div class="row"><span class="n">14</span><a href="14-numerical.html">数值稳定性与梯度检查</a></div><p class="note">log-sum-exp、稳定 BCE、梯度裁剪、混合精度和有限差分。</p></li>
+<li><div class="row"><span class="n">15</span><a href="15-complete-example.html">完整案例：手算一个两层分类网络</a></div><p class="note">从初始化到一次更新，再用有限差分复核一个梯度。</p></li>
+<li><div class="row"><span class="n">A</span><a href="a-cheatsheet.html">附录 A. 公式速查表</a></div><p class="note">集中列出前向、loss、反向传播和优化器公式。</p></li>
+<li><div class="row"><span class="n">B</span><a href="b-shapes-exercises.html">附录 B. 形状、练习与实现清单</a></div><p class="note">常见形状错误、章节练习和从零实现顺序。</p></li>
+</ul>
+<h2>统一约定</h2>
+<div class="tablewrap"><table><thead><tr><th>符号</th><th>含义</th></tr></thead><tbody>
+<tr><td><code>x</code></td><td>单个样本的列向量</td></tr><tr><td><code>B</code></td><td>batch size</td></tr><tr><td><code>d</code></td><td>输入特征数</td></tr><tr><td><code>m</code></td><td>输出特征数或类别数</td></tr><tr><td><code>\mathcal L</code></td><td>损失函数；按 batch 默认取平均</td></tr>
+</tbody></table></div>
+<footer><p>纯静态 HTML · 本地 KaTeX · 面向 360 CSS px 单列阅读。</p><p>配套阅读：<a href="../math/index.html">inferserver 的数学基础</a>、<a href="../gpu/index.html">GPU 编程基础</a>。</p></footer>
+</article></main>
+<script src="../assets/katex/katex.min.js" defer></script><script src="../assets/katex/auto-render.min.js" defer></script><script src="series.js"></script><script src="../assets/js/nav.js"></script>
+</body></html>
